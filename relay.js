@@ -15,6 +15,41 @@ if (!DISCORD_TOKEN) {
 
 const SESSIONS_DIR = path.join(__dirname, 'sessions');
 if (!fs.existsSync(SESSIONS_DIR)) fs.mkdirSync(SESSIONS_DIR);
+const SESSIONS_CONFIG_PATH = path.join(SESSIONS_DIR, 'config.json');
+
+function loadSessionsConfig() {
+    try {
+        if (!fs.existsSync(SESSIONS_CONFIG_PATH)) return { threads: {} };
+        return JSON.parse(fs.readFileSync(SESSIONS_CONFIG_PATH, 'utf8'));
+    } catch {
+        return { threads: {} };
+    }
+}
+
+function saveSessionsConfig(config) {
+    fs.writeFileSync(SESSIONS_CONFIG_PATH, JSON.stringify(config, null, 2));
+}
+
+function getSessionId(threadId) {
+    const config = loadSessionsConfig();
+    const entry = config.threads[threadId];
+    return entry ? entry['claude session id'] : '';
+}
+
+function setSessionId(threadId, sessionId, channelName) {
+    const config = loadSessionsConfig();
+    config.threads[threadId] = {
+        'claude session id': sessionId,
+        'channel': channelName
+    };
+    saveSessionsConfig(config);
+}
+
+function clearSession(threadId) {
+    const config = loadSessionsConfig();
+    delete config.threads[threadId];
+    saveSessionsConfig(config);
+}
 
 const CONFIG_DIR = path.join(__dirname, 'config');
 if (!fs.existsSync(CONFIG_DIR)) fs.mkdirSync(CONFIG_DIR);
@@ -228,8 +263,7 @@ client.on(Events.ClientReady, () => {
 // --- 3. THE EXECUTOR ---
 function runClaude(prompt, targetChannel) {
     const threadId = targetChannel.id;
-    const sessionPath = path.join(SESSIONS_DIR, `${threadId}.txt`);
-    let sessionId = fs.existsSync(sessionPath) ? fs.readFileSync(sessionPath, 'utf8').trim() : '';
+    let sessionId = getSessionId(threadId);
 
     // Resolve worktree for this channel
     const channelName = getParentChannelName(targetChannel);
@@ -500,7 +534,7 @@ function runClaude(prompt, targetChannel) {
 
         const sid = resultSessionId || getLatestSessionId(sessionIndexPath);
         if (sid) {
-            fs.writeFileSync(sessionPath, sid);
+            setSessionId(threadId, sid, channelName);
         }
     });
 }
@@ -580,8 +614,7 @@ client.on(Events.MessageCreate, async (message) => {
     // --- !clear command ---
     const clearWithWorktree = cleanPrompt.match(/^!clear\s*(--worktree|-w)?$/i);
     if (clearWithWorktree && threadId) {
-        const sessionPath = path.join(SESSIONS_DIR, `${threadId}.txt`);
-        if (fs.existsSync(sessionPath)) fs.unlinkSync(sessionPath);
+        clearSession(threadId);
         if (activeProcesses.has(threadId)) {
             activeProcesses.get(threadId).kill();
             activeProcesses.delete(threadId);
