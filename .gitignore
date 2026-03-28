@@ -25,6 +25,9 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # runtime session data
 sessions/
 
+# channel config (persisted base branches)
+config/
+
 # caches
 .eslintcache
 .cache
