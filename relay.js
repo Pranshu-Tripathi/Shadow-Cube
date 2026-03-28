@@ -1,26 +1,26 @@
 const { Client, GatewayIntentBits, Partials, Events } = require('discord.js');
-const { spawn } = require('child_process');
+const { spawn, execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
 // --- 1. CONFIGURATION ---
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const PROJECT_DIR = process.env.PROJECT_DIR || process.cwd();
+const BRANCH_PREFIX = process.env.BRANCH_PREFIX != null ? process.env.BRANCH_PREFIX : 'shadow-cube';
 
 if (!DISCORD_TOKEN) {
     console.error('DISCORD_TOKEN is required. Set it in your .env file.');
     process.exit(1);
 }
 
-// Derive Claude session index path from PROJECT_DIR
-const projectPathKey = PROJECT_DIR.replace(/\//g, '-');
-const SESSION_INDEX_PATH = path.join(
-    process.env.HOME,
-    `.claude/projects/${projectPathKey}/sessions-index.json`
-);
-
 const SESSIONS_DIR = path.join(__dirname, 'sessions');
 if (!fs.existsSync(SESSIONS_DIR)) fs.mkdirSync(SESSIONS_DIR);
+
+const CONFIG_DIR = path.join(__dirname, 'config');
+if (!fs.existsSync(CONFIG_DIR)) fs.mkdirSync(CONFIG_DIR);
+const CHANNEL_CONFIG_PATH = path.join(CONFIG_DIR, 'channels.json');
+
+const WORKTREES_BASE = process.env.WORKTREES_DIR || path.join(PROJECT_DIR, '..', '.shadow-cube-worktrees');
 
 const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.DirectMessages, GatewayIntentBits.MessageContent],
@@ -89,10 +89,10 @@ function splitForDiscord(text) {
     return chunks;
 }
 
-function getLatestSessionId() {
+function getLatestSessionId(sessionIndexPath) {
     try {
-        if (!fs.existsSync(SESSION_INDEX_PATH)) return null;
-        const data = JSON.parse(fs.readFileSync(SESSION_INDEX_PATH, 'utf8'));
+        if (!fs.existsSync(sessionIndexPath)) return null;
+        const data = JSON.parse(fs.readFileSync(sessionIndexPath, 'utf8'));
         if (!data.entries || data.entries.length === 0) return null;
         const sorted = data.entries.sort((a, b) => b.fileMtime - a.fileMtime);
         return sorted[0].sessionId;
@@ -102,10 +102,126 @@ function getLatestSessionId() {
     }
 }
 
+// --- CHANNEL CONFIG ---
+function loadChannelConfig() {
+    try {
+        if (!fs.existsSync(CHANNEL_CONFIG_PATH)) return {};
+        return JSON.parse(fs.readFileSync(CHANNEL_CONFIG_PATH, 'utf8'));
+    } catch {
+        return {};
+    }
+}
+
+function saveChannelConfig(config) {
+    fs.writeFileSync(CHANNEL_CONFIG_PATH, JSON.stringify(config, null, 2));
+}
+
+// --- WORKTREE UTILS ---
+let cachedDefaultBranch = null;
+
+function getDefaultBranch() {
+    if (cachedDefaultBranch) return cachedDefaultBranch;
+    try {
+        const ref = execSync('git symbolic-ref refs/remotes/origin/HEAD', { cwd: PROJECT_DIR, encoding: 'utf8' }).trim();
+        cachedDefaultBranch = ref.replace('refs/remotes/origin/', '');
+        return cachedDefaultBranch;
+    } catch {
+        // Fallback: check if main or master exists
+        try {
+            execSync('git rev-parse --verify main', { cwd: PROJECT_DIR, stdio: 'ignore' });
+            cachedDefaultBranch = 'main';
+        } catch {
+            cachedDefaultBranch = 'master';
+        }
+        return cachedDefaultBranch;
+    }
+}
+
+function getBaseBranch(channelId) {
+    const config = loadChannelConfig();
+    return (config[channelId] && config[channelId].baseBranch) || getDefaultBranch();
+}
+
+function sanitizeChannelName(name) {
+    return name.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+}
+
+function branchName(sanitizedChannel) {
+    return BRANCH_PREFIX ? `${BRANCH_PREFIX}/${sanitizedChannel}` : sanitizedChannel;
+}
+
+function ensureWorktree(channelName, baseBranch) {
+    const sanitized = sanitizeChannelName(channelName);
+    const worktreePath = path.join(WORKTREES_BASE, sanitized);
+    const branch = branchName(sanitized);
+
+    if (fs.existsSync(worktreePath)) {
+        console.log(`[DEBUG] Worktree already exists: ${worktreePath}`);
+        return worktreePath;
+    }
+
+    try {
+        if (!fs.existsSync(WORKTREES_BASE)) fs.mkdirSync(WORKTREES_BASE, { recursive: true });
+
+        try {
+            execSync(`git worktree add -b "${branch}" "${worktreePath}" "${baseBranch}"`, { cwd: PROJECT_DIR, encoding: 'utf8', stdio: 'pipe' });
+        } catch (e) {
+            if (e.stderr && e.stderr.includes('already exists')) {
+                execSync(`git worktree add "${worktreePath}" "${branch}"`, { cwd: PROJECT_DIR, encoding: 'utf8', stdio: 'pipe' });
+            } else {
+                throw e;
+            }
+        }
+
+        console.log(`[DEBUG] Created worktree: ${worktreePath} (branch: ${branch}, base: ${baseBranch})`);
+        return worktreePath;
+    } catch (e) {
+        console.error(`[DEBUG] Failed to create worktree, falling back to PROJECT_DIR:`, e.message);
+        return PROJECT_DIR;
+    }
+}
+
+function removeWorktree(channelName) {
+    const sanitized = sanitizeChannelName(channelName);
+    const worktreePath = path.join(WORKTREES_BASE, sanitized);
+    const branch = branchName(sanitized);
+
+    try {
+        execSync(`git worktree remove "${worktreePath}" --force`, { cwd: PROJECT_DIR, stdio: 'pipe' });
+        console.log(`[DEBUG] Removed worktree: ${worktreePath}`);
+    } catch (e) {
+        console.error(`[DEBUG] Failed to remove worktree:`, e.message);
+        return false;
+    }
+
+    try {
+        execSync(`git branch -d "${branch}"`, { cwd: PROJECT_DIR, stdio: 'pipe' });
+    } catch {
+        // Branch may not exist or may have unmerged changes, that's ok
+    }
+
+    return true;
+}
+
+function getParentChannelName(channel) {
+    if (channel.isThread() && channel.parent) {
+        return channel.parent.name;
+    }
+    return channel.name;
+}
+
+function getParentChannelId(channel) {
+    if (channel.isThread() && channel.parentId) {
+        return channel.parentId;
+    }
+    return channel.id;
+}
+
 client.on(Events.ClientReady, () => {
     console.log('--------------------------------------------------');
-    console.log(`[DEBUG] SHADOW CUBE V3.1 (STREAMING + APPROVALS) ONLINE`);
-    console.log(`[DEBUG] MONITORING: ${SESSION_INDEX_PATH}`);
+    console.log(`[DEBUG] SHADOW CUBE V3.2 (STREAMING + WORKTREES) ONLINE`);
+    console.log(`[DEBUG] PROJECT_DIR: ${PROJECT_DIR}`);
+    console.log(`[DEBUG] WORKTREES_BASE: ${WORKTREES_BASE}`);
     console.log('--------------------------------------------------');
 });
 
@@ -115,14 +231,27 @@ function runClaude(prompt, targetChannel) {
     const sessionPath = path.join(SESSIONS_DIR, `${threadId}.txt`);
     let sessionId = fs.existsSync(sessionPath) ? fs.readFileSync(sessionPath, 'utf8').trim() : '';
 
+    // Resolve worktree for this channel
+    const channelName = getParentChannelName(targetChannel);
+    const channelId = getParentChannelId(targetChannel);
+    const baseBranch = getBaseBranch(channelId);
+    const activeCwd = ensureWorktree(channelName, baseBranch);
+
+    // Derive session index path from the active working directory
+    const activePathKey = activeCwd.replace(/\//g, '-');
+    const sessionIndexPath = path.join(
+        process.env.HOME,
+        `.claude/projects/${activePathKey}/sessions-index.json`
+    );
+
     const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--dangerously-skip-permissions'];
     if (sessionId) {
         args.push('--resume', sessionId);
     }
 
-    console.log(`[DEBUG] [Thread: ${threadId}] SPAWNING CLAUDE (stream-json)...`);
+    console.log(`[DEBUG] [Thread: ${threadId}] SPAWNING CLAUDE in ${activeCwd} (branch: ${branchName(sanitizeChannelName(channelName))})...`);
     // Keep stdin as pipe so we can send permission approvals from Discord
-    const child = spawn('claude', args, { cwd: PROJECT_DIR });
+    const child = spawn('claude', args, { cwd: activeCwd });
 
     activeProcesses.set(threadId, child);
 
@@ -207,10 +336,11 @@ function runClaude(prompt, targetChannel) {
     }
 
     function formatToolUse(toolName, inputJson) {
+        const stripCwd = (p) => p.replace(activeCwd + '/', '').replace(PROJECT_DIR + '/', '');
         try {
             const input = JSON.parse(inputJson);
             if (toolName === 'Edit') {
-                const file = input.file_path ? input.file_path.replace(PROJECT_DIR + '/', '') : '?';
+                const file = input.file_path ? stripCwd(input.file_path) : '?';
                 let msg = `**Edit:** \`${file}\`\n`;
                 if (input.old_string && input.new_string) {
                     const diffLines = [];
@@ -221,7 +351,7 @@ function runClaude(prompt, targetChannel) {
                 return msg;
             }
             if (toolName === 'Write') {
-                const file = input.file_path ? input.file_path.replace(PROJECT_DIR + '/', '') : '?';
+                const file = input.file_path ? stripCwd(input.file_path) : '?';
                 let msg = `**Write:** \`${file}\`\n`;
                 if (input.content) {
                     const lang = detectLanguage(input.content);
@@ -231,7 +361,7 @@ function runClaude(prompt, targetChannel) {
                 return msg;
             }
             if (toolName === 'Read') {
-                const file = input.file_path ? input.file_path.replace(PROJECT_DIR + '/', '') : '?';
+                const file = input.file_path ? stripCwd(input.file_path) : '?';
                 return `**Read:** \`${file}\``;
             }
             if (toolName === 'Bash') {
@@ -241,7 +371,7 @@ function runClaude(prompt, targetChannel) {
                 return `**Glob:** \`${input.pattern || '?'}\``;
             }
             if (toolName === 'Grep') {
-                return `**Grep:** \`${input.pattern || '?'}\`${input.path ? ` in \`${input.path.replace(PROJECT_DIR + '/', '')}\`` : ''}`;
+                return `**Grep:** \`${input.pattern || '?'}\`${input.path ? ` in \`${stripCwd(input.path)}\`` : ''}`;
             }
             // Default: just show tool name
             return `**Tool:** \`${toolName}\``;
@@ -368,7 +498,7 @@ function runClaude(prompt, targetChannel) {
         activeProcesses.delete(threadId);
         console.log(`[DEBUG] [Thread: ${threadId}] PROCESS EXITED (Code: ${code})`);
 
-        const sid = resultSessionId || getLatestSessionId();
+        const sid = resultSessionId || getLatestSessionId(sessionIndexPath);
         if (sid) {
             fs.writeFileSync(sessionPath, sid);
         }
@@ -382,15 +512,89 @@ client.on(Events.MessageCreate, async (message) => {
     const cleanPrompt = stripDiscordTags(message.content);
     const threadId = message.channel.isThread() ? message.channel.id : null;
 
+    // --- !base command ---
+    const baseMatch = cleanPrompt.match(/^!base\s+(.+)$/i);
+    if (baseMatch) {
+        const branch = baseMatch[1].trim();
+        const channelId = getParentChannelId(message.channel);
+        const config = loadChannelConfig();
+        config[channelId] = { ...(config[channelId] || {}), baseBranch: branch };
+        saveChannelConfig(config);
+        return message.reply(`**Base branch set to \`${branch}\` for this channel.** New worktrees will branch from it.`);
+    }
+
+    // --- !worktrees command ---
+    if (/^!worktrees?$/i.test(cleanPrompt)) {
+        try {
+            const output = execSync('git worktree list', { cwd: PROJECT_DIR, encoding: 'utf8' });
+            const lines = output.trim().split('\n');
+            const worktreeLines = BRANCH_PREFIX ? lines.filter(l => l.includes(`${BRANCH_PREFIX}/`)) : lines.filter(l => l !== lines[0]);
+            if (worktreeLines.length === 0) {
+                return message.reply('**No active worktrees.**');
+            }
+            const formatted = worktreeLines.map(l => `\`${l}\``).join('\n');
+            return message.reply(`**Active worktrees:**\n${formatted}`);
+        } catch (e) {
+            return message.reply(`**Failed to list worktrees:** ${e.message}`);
+        }
+    }
+
+    // --- !deploy command ---
+    const deployMatch = cleanPrompt.match(/^!deploy\s*(.*)$/i);
+    if (deployMatch) {
+        const channelName = getParentChannelName(message.channel);
+        const sanitized = sanitizeChannelName(channelName);
+        const worktreePath = path.join(WORKTREES_BASE, sanitized);
+        const branch = branchName(sanitized);
+
+        if (!fs.existsSync(worktreePath)) {
+            return message.reply(`**No worktree found for this channel.** Send a message first to create one.`);
+        }
+
+        try {
+            // Check for changes
+            const status = execSync('git status --porcelain', { cwd: worktreePath, encoding: 'utf8' }).trim();
+            if (!status) {
+                return message.reply(`**Nothing to deploy.** No uncommitted changes on \`${branch}\`.`);
+            }
+
+            // Stage all changes
+            execSync('git add -A', { cwd: worktreePath, stdio: 'pipe' });
+
+            // Build commit message
+            const userMsg = deployMatch[1].trim();
+            const commitMsg = userMsg || `Deploy from Discord (${channelName}) - ${new Date().toISOString().slice(0, 19)}`;
+
+            execSync(`git commit -m "${commitMsg.replace(/"/g, '\\"')}"`, { cwd: worktreePath, encoding: 'utf8', stdio: 'pipe' });
+
+            // Get short hash of new commit
+            const hash = execSync('git rev-parse --short HEAD', { cwd: worktreePath, encoding: 'utf8' }).trim();
+
+            const changedFiles = status.split('\n').length;
+            return message.reply(`**Deployed to \`${branch}\`** (\`${hash}\`)\n${changedFiles} file(s) changed\nMessage: *${commitMsg}*`);
+        } catch (e) {
+            return message.reply(`**Deploy failed:** ${e.message}`);
+        }
+    }
+
     // --- !clear command ---
-    if (cleanPrompt.toLowerCase() === '!clear' && threadId) {
+    const clearWithWorktree = cleanPrompt.match(/^!clear\s*(--worktree|-w)?$/i);
+    if (clearWithWorktree && threadId) {
         const sessionPath = path.join(SESSIONS_DIR, `${threadId}.txt`);
         if (fs.existsSync(sessionPath)) fs.unlinkSync(sessionPath);
         if (activeProcesses.has(threadId)) {
             activeProcesses.get(threadId).kill();
             activeProcesses.delete(threadId);
         }
-        return message.reply("**Thread session cleared & process killed.** Next message will start fresh.");
+
+        let extra = '';
+        if (clearWithWorktree[1]) {
+            const channelName = getParentChannelName(message.channel);
+            const removed = removeWorktree(channelName);
+            extra = removed ? ' Worktree removed.' : ' Failed to remove worktree.';
+        }
+
+        return message.reply(`**Thread session cleared & process killed.${extra}** Next message will start fresh.`);
     }
 
     if (!cleanPrompt) return;
