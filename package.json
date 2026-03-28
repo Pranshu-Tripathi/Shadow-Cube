@@ -1,0 +1,17 @@
+{
+  "name": "shadow-cube-bridge",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.28.0",
+    "axios": "^1.13.6",
+    "discord.js": "^14.25.1"
+  }
+}
