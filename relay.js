@@ -677,6 +677,26 @@ client.on(Events.MessageCreate, async (message) => {
         }
     }
 
+    // --- !push command ---
+    const pushMatch = cleanPrompt.match(/^!push$/i);
+    if (pushMatch) {
+        const channelName = getParentChannelName(message.channel);
+        const sanitized = sanitizeChannelName(channelName);
+        const worktreePath = path.join(WORKTREES_BASE, sanitized);
+        const branch = branchName(sanitized);
+
+        if (!fs.existsSync(worktreePath)) {
+            return message.reply(`**No worktree found for this channel.** Send a message first to create one.`);
+        }
+
+        try {
+            const result = execSync(`git push -u origin ${branch}`, { cwd: worktreePath, encoding: 'utf8', stdio: 'pipe' });
+            return message.reply(`**Pushed \`${branch}\` to remote.**`);
+        } catch (e) {
+            return message.reply(`**Push failed:** ${e.message}`);
+        }
+    }
+
     // --- !clear command ---
     const clearWithWorktree = cleanPrompt.match(/^!clear\s*(--worktree|-w)?$/i);
     if (clearWithWorktree) {
