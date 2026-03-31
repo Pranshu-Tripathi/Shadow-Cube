@@ -17,6 +17,15 @@ const SESSIONS_DIR = path.join(__dirname, 'sessions');
 if (!fs.existsSync(SESSIONS_DIR)) fs.mkdirSync(SESSIONS_DIR);
 const SESSIONS_CONFIG_PATH = path.join(SESSIONS_DIR, 'config.json');
 
+// Clean up legacy .txt session files (now stored in config.json)
+try {
+    const legacyFiles = fs.readdirSync(SESSIONS_DIR).filter(f => f.endsWith('.txt'));
+    for (const f of legacyFiles) {
+        fs.unlinkSync(path.join(SESSIONS_DIR, f));
+    }
+    if (legacyFiles.length > 0) console.log(`[DEBUG] Cleaned up ${legacyFiles.length} legacy session .txt files`);
+} catch { }
+
 function loadSessionsConfig() {
     try {
         if (!fs.existsSync(SESSIONS_CONFIG_PATH)) return { threads: {} };
@@ -185,16 +194,7 @@ function branchName(sanitizedChannel) {
     return BRANCH_PREFIX ? `${BRANCH_PREFIX}/${sanitizedChannel}` : sanitizedChannel;
 }
 
-function ensureWorktree(channelName, baseBranch) {
-    const sanitized = sanitizeChannelName(channelName);
-    const worktreePath = path.join(WORKTREES_BASE, sanitized);
-    const branch = branchName(sanitized);
-
-    if (fs.existsSync(worktreePath)) {
-        console.log(`[DEBUG] Worktree already exists: ${worktreePath}`);
-        return worktreePath;
-    }
-
+function createWorktree(worktreePath, branch, baseBranch) {
     try {
         if (!fs.existsSync(WORKTREES_BASE)) fs.mkdirSync(WORKTREES_BASE, { recursive: true });
 
@@ -208,12 +208,54 @@ function ensureWorktree(channelName, baseBranch) {
             }
         }
 
+        // Store base branch marker for mismatch detection
+        fs.writeFileSync(path.join(worktreePath, '.shadow-cube-base'), baseBranch);
+
         console.log(`[DEBUG] Created worktree: ${worktreePath} (branch: ${branch}, base: ${baseBranch})`);
         return worktreePath;
     } catch (e) {
         console.error(`[DEBUG] Failed to create worktree, falling back to PROJECT_DIR:`, e.message);
         return PROJECT_DIR;
     }
+}
+
+function ensureWorktree(channelName, baseBranch) {
+    const sanitized = sanitizeChannelName(channelName);
+    const worktreePath = path.join(WORKTREES_BASE, sanitized);
+    const branch = branchName(sanitized);
+
+    if (fs.existsSync(worktreePath)) {
+        // Verify it's still a valid git worktree (not just a leftover directory)
+        try {
+            execSync('git rev-parse --git-dir', { cwd: worktreePath, stdio: 'pipe' });
+        } catch {
+            console.log(`[DEBUG] Worktree directory exists but is not a valid git worktree. Removing and recreating.`);
+            fs.rmSync(worktreePath, { recursive: true, force: true });
+            return createWorktree(worktreePath, branch, baseBranch);
+        }
+
+        // Check if base branch has changed since worktree was created
+        const markerPath = path.join(worktreePath, '.shadow-cube-base');
+        if (fs.existsSync(markerPath)) {
+            const existingBase = fs.readFileSync(markerPath, 'utf8').trim();
+            if (existingBase !== baseBranch) {
+                console.log(`[DEBUG] Worktree base mismatch: existing=${existingBase}, requested=${baseBranch}. Rebasing.`);
+                try {
+                    execSync(`git fetch origin ${baseBranch}`, { cwd: worktreePath, stdio: 'pipe' });
+                    execSync(`git rebase origin/${baseBranch}`, { cwd: worktreePath, stdio: 'pipe' });
+                    fs.writeFileSync(markerPath, baseBranch);
+                    console.log(`[DEBUG] Rebased worktree ${worktreePath} onto ${baseBranch}`);
+                } catch (e) {
+                    try { execSync('git rebase --abort', { cwd: worktreePath, stdio: 'pipe' }); } catch { }
+                    console.error(`[DEBUG] Failed to rebase worktree onto ${baseBranch}:`, e.message);
+                }
+            }
+        }
+        console.log(`[DEBUG] Worktree already exists: ${worktreePath}`);
+        return worktreePath;
+    }
+
+    return createWorktree(worktreePath, branch, baseBranch);
 }
 
 function removeWorktree(channelName) {
@@ -279,6 +321,7 @@ function runClaude(prompt, targetChannel) {
     );
 
     const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--dangerously-skip-permissions'];
+    args.push('--append-system-prompt', `The base branch for this worktree is \`${baseBranch}\`. Use \`${baseBranch}\` as the target for PRs, diffs, and comparisons — not \`main\` or \`master\` unless they match.`);
     if (sessionId) {
         args.push('--resume', sessionId);
     }
@@ -551,10 +594,33 @@ client.on(Events.MessageCreate, async (message) => {
     if (baseMatch) {
         const branch = baseMatch[1].trim();
         const channelId = getParentChannelId(message.channel);
+        const channelName = getParentChannelName(message.channel);
         const config = loadChannelConfig();
+        const oldBase = config[channelId]?.baseBranch;
         config[channelId] = { ...(config[channelId] || {}), baseBranch: branch };
         saveChannelConfig(config);
-        return message.reply(`**Base branch set to \`${branch}\` for this channel.** New worktrees will branch from it.`);
+
+        // Rebase existing worktree if base branch changed
+        let rebaseMsg = '';
+        if (oldBase && oldBase !== branch) {
+            const sanitized = sanitizeChannelName(channelName);
+            const worktreePath = path.join(WORKTREES_BASE, sanitized);
+            if (fs.existsSync(worktreePath)) {
+                try {
+                    execSync(`git fetch origin ${branch}`, { cwd: worktreePath, stdio: 'pipe' });
+                    execSync(`git rebase origin/${branch}`, { cwd: worktreePath, stdio: 'pipe' });
+                    rebaseMsg = `\nExisting worktree \`${sanitized}\` has been rebased onto \`${branch}\`.`;
+                    console.log(`[DEBUG] Rebased worktree ${worktreePath} onto ${branch}`);
+                } catch (e) {
+                    // Abort failed rebase
+                    try { execSync('git rebase --abort', { cwd: worktreePath, stdio: 'pipe' }); } catch { }
+                    rebaseMsg = `\n⚠️ Failed to rebase worktree \`${sanitized}\` onto \`${branch}\`: ${e.message}\nYou may need to \`!reset ${channelName}\` and start fresh.`;
+                    console.error(`[DEBUG] Failed to rebase worktree:`, e.message);
+                }
+            }
+        }
+
+        return message.reply(`**Base branch set to \`${branch}\` for this channel.**${rebaseMsg}`);
     }
 
     // --- !worktrees command ---
@@ -611,13 +677,35 @@ client.on(Events.MessageCreate, async (message) => {
         }
     }
 
+    // --- !push command ---
+    const pushMatch = cleanPrompt.match(/^!push$/i);
+    if (pushMatch) {
+        const channelName = getParentChannelName(message.channel);
+        const sanitized = sanitizeChannelName(channelName);
+        const worktreePath = path.join(WORKTREES_BASE, sanitized);
+        const branch = branchName(sanitized);
+
+        if (!fs.existsSync(worktreePath)) {
+            return message.reply(`**No worktree found for this channel.** Send a message first to create one.`);
+        }
+
+        try {
+            const result = execSync(`git push -u origin ${branch}`, { cwd: worktreePath, encoding: 'utf8', stdio: 'pipe' });
+            return message.reply(`**Pushed \`${branch}\` to remote.**`);
+        } catch (e) {
+            return message.reply(`**Push failed:** ${e.message}`);
+        }
+    }
+
     // --- !clear command ---
     const clearWithWorktree = cleanPrompt.match(/^!clear\s*(--worktree|-w)?$/i);
-    if (clearWithWorktree && threadId) {
-        clearSession(threadId);
-        if (activeProcesses.has(threadId)) {
-            activeProcesses.get(threadId).kill();
-            activeProcesses.delete(threadId);
+    if (clearWithWorktree) {
+        if (threadId) {
+            clearSession(threadId);
+            if (activeProcesses.has(threadId)) {
+                activeProcesses.get(threadId).kill();
+                activeProcesses.delete(threadId);
+            }
         }
 
         let extra = '';
@@ -627,7 +715,7 @@ client.on(Events.MessageCreate, async (message) => {
             extra = removed ? ' Worktree removed.' : ' Failed to remove worktree.';
         }
 
-        return message.reply(`**Thread session cleared & process killed.${extra}** Next message will start fresh.`);
+        return message.reply(`**Session cleared & process killed.${extra}** Next message will start fresh.`);
     }
 
     if (!cleanPrompt) return;
@@ -667,5 +755,26 @@ client.on(Events.MessageCreate, async (message) => {
     await message.react('⚙️');
     runClaude(cleanPrompt, targetChannel);
 });
+
+// --- GRACEFUL SHUTDOWN ---
+function shutdown(signal) {
+    console.log(`\n[DEBUG] Received ${signal}. Shutting down...`);
+
+    // Kill all active Claude processes
+    for (const [threadId, child] of activeProcesses) {
+        console.log(`[DEBUG] Killing Claude process for thread ${threadId} (pid: ${child.pid})`);
+        child.kill('SIGTERM');
+    }
+    activeProcesses.clear();
+
+    // Destroy the Discord client
+    client.destroy();
+
+    console.log('[DEBUG] Shutdown complete.');
+    process.exit(0);
+}
+
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 client.login(DISCORD_TOKEN);
