@@ -718,6 +718,38 @@ client.on(Events.MessageCreate, async (message) => {
         return message.reply(`**Session cleared & process killed.${extra}** Next message will start fresh.`);
     }
 
+    // --- !destroy command ---
+    if (/^!destroy$/i.test(cleanPrompt)) {
+        const channelName = getParentChannelName(message.channel);
+        const sanitized = sanitizeChannelName(channelName);
+        const branch = branchName(sanitized);
+
+        // Kill active process and clear session
+        if (threadId) {
+            clearSession(threadId);
+            if (activeProcesses.has(threadId)) {
+                activeProcesses.get(threadId).kill();
+                activeProcesses.delete(threadId);
+            }
+        }
+
+        const status = [];
+
+        // Remove the worktree
+        const removed = removeWorktree(channelName);
+        status.push(removed ? 'Worktree removed.' : 'Failed to remove worktree.');
+
+        // Fetch the branch in main repository
+        try {
+            execSync(`git fetch origin ${branch}`, { cwd: PROJECT_DIR, stdio: 'pipe' });
+            status.push(`Fetched \`${branch}\` in main repository.`);
+        } catch {
+            status.push(`Branch \`${branch}\` not found on remote.`);
+        }
+
+        return message.reply(`**Destroyed channel worktree.**\n${status.join('\n')}`);
+    }
+
     if (!cleanPrompt) return;
 
     // --- If there's an active process in this thread, pipe input to stdin (approvals, follow-ups) ---
