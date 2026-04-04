@@ -321,7 +321,16 @@ function runClaude(prompt, targetChannel) {
     );
 
     const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--dangerously-skip-permissions'];
-    args.push('--append-system-prompt', `The base branch for this worktree is \`${baseBranch}\`. Use \`${baseBranch}\` as the target for PRs, diffs, and comparisons — not \`main\` or \`master\` unless they match.`);
+    let systemPrompt = `The base branch for this worktree is \`${baseBranch}\`. Use \`${baseBranch}\` as the target for PRs, diffs, and comparisons — not \`main\` or \`master\` unless they match.`;
+
+    // Append channel-specific rule if set
+    const channelConfig = loadChannelConfig();
+    const channelRule = channelConfig[channelId]?.systemPrompt;
+    if (channelRule) {
+        systemPrompt += `\n\n${channelRule}`;
+    }
+
+    args.push('--append-system-prompt', systemPrompt);
     if (sessionId) {
         args.push('--resume', sessionId);
     }
@@ -694,6 +703,61 @@ client.on(Events.MessageCreate, async (message) => {
             return message.reply(`**Pushed \`${branch}\` to remote.**`);
         } catch (e) {
             return message.reply(`**Push failed:** ${e.message}`);
+        }
+    }
+
+    // --- !rule command ---
+    const ruleWipeMatch = cleanPrompt.match(/^!rule\s+(--wipe|-w)$/i);
+    if (ruleWipeMatch) {
+        const channelId = getParentChannelId(message.channel);
+        const config = loadChannelConfig();
+        if (config[channelId]) {
+            delete config[channelId].systemPrompt;
+            saveChannelConfig(config);
+        }
+        return message.reply('**System prompt rule cleared for this channel.**');
+    }
+
+    const ruleViewMatch = cleanPrompt.match(/^!rule\s+(--view|-v)$/i);
+    if (ruleViewMatch) {
+        const channelId = getParentChannelId(message.channel);
+        const config = loadChannelConfig();
+        const rule = config[channelId]?.systemPrompt;
+        if (rule) {
+            const chunks = splitForDiscord(`**Current rule for this channel:**\n\`\`\`md\n${rule}\n\`\`\``);
+            for (const chunk of chunks) {
+                await message.reply(chunk);
+            }
+        } else {
+            await message.reply('**No rule set for this channel.** Attach a `.md` file with `!rule` to set one.');
+        }
+        return;
+    }
+
+    if (/^!rule$/i.test(cleanPrompt)) {
+        if (!message.attachments.size) {
+            return message.reply('**Attach a `.md` file with `!rule` to set a system prompt rule.**\nUse `!rule -v` to view or `!rule -w` to clear.');
+        }
+
+        const channelId = getParentChannelId(message.channel);
+        const attachment = message.attachments.first();
+
+        if (!attachment.name.endsWith('.md')) {
+            return message.reply('**Please attach a `.md` file.** Only Markdown files are supported for rules.');
+        }
+
+        try {
+            const response = await fetch(attachment.url);
+            const ruleContent = await response.text();
+
+            const config = loadChannelConfig();
+            config[channelId] = { ...(config[channelId] || {}), systemPrompt: ruleContent };
+            saveChannelConfig(config);
+
+            const preview = ruleContent.length > 500 ? ruleContent.slice(0, 500) + '\n...' : ruleContent;
+            return message.reply(`**System prompt rule set for this channel.**\n\`\`\`md\n${preview}\n\`\`\``);
+        } catch (e) {
+            return message.reply(`**Failed to download attachment:** ${e.message}`);
         }
     }
 
