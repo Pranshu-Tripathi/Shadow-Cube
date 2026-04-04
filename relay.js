@@ -734,9 +734,38 @@ client.on(Events.MessageCreate, async (message) => {
         return;
     }
 
+    const ruleUrlMatch = cleanPrompt.match(/^!rule\s+(?:--url|-url)\s+(.+)$/i);
+    if (ruleUrlMatch) {
+        const channelId = getParentChannelId(message.channel);
+        let url = ruleUrlMatch[1].trim();
+
+        // Convert GitHub blob URLs to raw URLs
+        const ghBlobMatch = url.match(/^https?:\/\/github\.com\/([^/]+\/[^/]+)\/blob\/(.+)$/);
+        if (ghBlobMatch) {
+            url = `https://raw.githubusercontent.com/${ghBlobMatch[1]}/${ghBlobMatch[2]}`;
+        }
+
+        try {
+            const response = await fetch(url);
+            if (!response.ok) {
+                return message.reply(`**Failed to fetch URL:** ${response.status} ${response.statusText}`);
+            }
+            const ruleContent = await response.text();
+
+            const config = loadChannelConfig();
+            config[channelId] = { ...(config[channelId] || {}), systemPrompt: ruleContent };
+            saveChannelConfig(config);
+
+            const preview = ruleContent.length > 500 ? ruleContent.slice(0, 500) + '\n...' : ruleContent;
+            return message.reply(`**System prompt rule set from URL.**\n\`\`\`md\n${preview}\n\`\`\``);
+        } catch (e) {
+            return message.reply(`**Failed to fetch URL:** ${e.message}`);
+        }
+    }
+
     if (/^!rule$/i.test(cleanPrompt)) {
         if (!message.attachments.size) {
-            return message.reply('**Attach a `.md` file with `!rule` to set a system prompt rule.**\nUse `!rule -v` to view or `!rule -w` to clear.');
+            return message.reply('**Attach a `.md` file with `!rule` to set a system prompt rule.**\nUse `!rule -url <link>` to fetch from a URL, `!rule -v` to view, or `!rule -w` to clear.');
         }
 
         const channelId = getParentChannelId(message.channel);
