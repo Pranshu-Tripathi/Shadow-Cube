@@ -5,7 +5,7 @@ const path = require('path');
 
 // --- 1. CONFIGURATION ---
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
-const PROJECT_DIR = process.env.PROJECT_DIR || process.cwd();
+let PROJECT_DIR = process.env.PROJECT_DIR || process.cwd();
 const BRANCH_PREFIX = process.env.BRANCH_PREFIX != null ? process.env.BRANCH_PREFIX : 'shadow-cube';
 
 if (!DISCORD_TOKEN) {
@@ -64,7 +64,7 @@ const CONFIG_DIR = path.join(__dirname, 'config');
 if (!fs.existsSync(CONFIG_DIR)) fs.mkdirSync(CONFIG_DIR);
 const CHANNEL_CONFIG_PATH = path.join(CONFIG_DIR, 'channels.json');
 
-const WORKTREES_BASE = process.env.WORKTREES_DIR || path.join(PROJECT_DIR, '..', '.shadow-cube-worktrees');
+let WORKTREES_BASE = process.env.WORKTREES_DIR || path.join(PROJECT_DIR, '..', '.shadow-cube-worktrees');
 
 const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.DirectMessages, GatewayIntentBits.MessageContent],
@@ -162,6 +162,14 @@ function saveChannelConfig(config) {
 
 // --- WORKTREE UTILS ---
 let cachedDefaultBranch = null;
+
+function setProjectDir(newDir) {
+    PROJECT_DIR = newDir;
+    if (!process.env.WORKTREES_DIR) {
+        WORKTREES_BASE = path.join(PROJECT_DIR, '..', '.shadow-cube-worktrees');
+    }
+    cachedDefaultBranch = null;
+}
 
 function getDefaultBranch() {
     if (cachedDefaultBranch) return cachedDefaultBranch;
@@ -841,6 +849,32 @@ client.on(Events.MessageCreate, async (message) => {
         }
 
         return message.reply(`**Destroyed channel worktree.**\n${status.join('\n')}`);
+    }
+
+    // --- !project command ---
+    const projectMatch = cleanPrompt.match(/^!project\s*(.*)$/i);
+    if (projectMatch) {
+        const arg = projectMatch[1].trim();
+
+        if (!arg) {
+            return message.reply(`**Current project:** \`${PROJECT_DIR}\`\n**Worktrees:** \`${WORKTREES_BASE}\``);
+        }
+
+        const resolvedPath = path.resolve(arg);
+
+        if (!fs.existsSync(resolvedPath)) {
+            return message.reply(`**Directory not found:** \`${resolvedPath}\``);
+        }
+
+        try {
+            execSync('git rev-parse --git-dir', { cwd: resolvedPath, stdio: 'pipe' });
+        } catch {
+            return message.reply(`**Not a git repository:** \`${resolvedPath}\``);
+        }
+
+        const oldDir = PROJECT_DIR;
+        setProjectDir(resolvedPath);
+        return message.reply(`**Project switched.**\n\`${oldDir}\` → \`${PROJECT_DIR}\`\nWorktrees: \`${WORKTREES_BASE}\``);
     }
 
     if (!cleanPrompt) return;
