@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, Partials, Events } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, Events, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder } = require('discord.js');
 const { spawn, execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -73,6 +73,18 @@ const client = new Client({
 
 // Map threadId -> { child, stdin writable }
 const activeProcesses = new Map();
+
+// Map threadId -> { toolUseId, questions, answers, currentIndex, awaitingCustomFor }
+// Tracks in-flight AskUserQuestion calls so we can route Discord clicks/replies back as tool_result.
+const pendingQuestions = new Map();
+
+// Map interactionToken (short id) -> { threadId, questionIndex }
+// Embedded into Discord component custom_ids so handlers can locate the right pending question.
+let interactionCounter = 0;
+function nextInteractionToken() {
+    interactionCounter = (interactionCounter + 1) % 1_000_000;
+    return `${Date.now().toString(36)}-${interactionCounter}`;
+}
 
 // --- 2. UTILS ---
 const stripAnsi = (str) => str.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, '');
@@ -294,12 +306,257 @@ function getParentChannelId(channel) {
     return channel.id;
 }
 
+// --- ASK-USER-QUESTION RENDERING ---
+const CUSTOM_ANSWER_VALUE = '__custom__';
+
+function buildQuestionComponents(token, question, questionIndex) {
+    const rows = [];
+    const tooManyOptions = question.options.length > 4;
+    const useSelect = question.multiSelect || tooManyOptions;
+
+    if (useSelect) {
+        const select = new StringSelectMenuBuilder()
+            .setCustomId(`auq:select:${token}:${questionIndex}`)
+            .setPlaceholder(question.multiSelect ? 'Pick one or more…' : 'Pick one…')
+            .setMinValues(1)
+            .setMaxValues(question.multiSelect ? question.options.length : 1)
+            .addOptions(
+                question.options.slice(0, 25).map((opt, i) => ({
+                    label: opt.label.slice(0, 100),
+                    description: opt.description ? opt.description.slice(0, 100) : undefined,
+                    value: String(i),
+                }))
+            );
+        rows.push(new ActionRowBuilder().addComponents(select));
+        rows.push(new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId(`auq:custom:${token}:${questionIndex}`)
+                .setLabel('Custom answer')
+                .setStyle(ButtonStyle.Secondary)
+        ));
+    } else {
+        const buttons = question.options.slice(0, 4).map((opt, i) =>
+            new ButtonBuilder()
+                .setCustomId(`auq:btn:${token}:${questionIndex}:${i}`)
+                .setLabel(opt.label.slice(0, 80))
+                .setStyle(ButtonStyle.Primary)
+        );
+        buttons.push(
+            new ButtonBuilder()
+                .setCustomId(`auq:custom:${token}:${questionIndex}`)
+                .setLabel('Custom')
+                .setStyle(ButtonStyle.Secondary)
+        );
+        rows.push(new ActionRowBuilder().addComponents(buttons));
+    }
+    return rows;
+}
+
+function renderQuestionBody(question, questionIndex, total) {
+    const header = question.header ? `**${question.header}**` : '';
+    const prefix = total > 1 ? `❓ Question ${questionIndex + 1}/${total}` : '❓';
+    const lines = [`${prefix} ${header}`.trim(), question.question];
+    if (question.multiSelect) lines.push('*Select one or more, then submit.*');
+    for (let i = 0; i < question.options.length; i++) {
+        const opt = question.options[i];
+        let line = `\`${i + 1}.\` **${opt.label}**`;
+        if (opt.description) line += ` — ${opt.description}`;
+        lines.push(line);
+        if (opt.preview) lines.push(`\`\`\`\n${opt.preview.slice(0, 500)}\n\`\`\``);
+    }
+    return lines.join('\n');
+}
+
+async function handleAskUserQuestion(targetChannel, child, requestId, toolUseId, input) {
+    const threadId = targetChannel.id;
+    const rawQuestions = Array.isArray(input.questions) ? input.questions : [];
+    const questions = rawQuestions.map(q => ({
+        question: q.question || '',
+        header: q.header || '',
+        multiSelect: !!q.multiSelect,
+        options: Array.isArray(q.options) ? q.options : [],
+    }));
+
+    if (questions.length === 0) {
+        writeStdin(child, {
+            type: 'control_response',
+            response: {
+                subtype: 'success',
+                request_id: requestId,
+                response: { behavior: 'allow', updatedInput: { questions: [], answers: {} } },
+            },
+        });
+        return;
+    }
+
+    const token = nextInteractionToken();
+    const pending = {
+        toolUseId,
+        requestId,
+        originalInput: input,
+        questions,
+        answers: {},
+        currentIndex: 0,
+        awaitingCustomFor: null,
+        messages: [],
+        token,
+    };
+    pendingQuestions.set(threadId, pending);
+
+    await renderCurrentQuestion(targetChannel);
+}
+
+async function renderCurrentQuestion(targetChannel) {
+    const threadId = targetChannel.id;
+    const pending = pendingQuestions.get(threadId);
+    if (!pending) return;
+    const q = pending.questions[pending.currentIndex];
+    const body = renderQuestionBody(q, pending.currentIndex, pending.questions.length);
+    const components = buildQuestionComponents(pending.token, q, pending.currentIndex);
+
+    try {
+        const msg = await targetChannel.send({ content: body, components });
+        pending.messages.push(msg);
+    } catch (e) {
+        console.error('[DEBUG] Failed to send AskUserQuestion message:', e.message);
+    }
+}
+
+async function advanceOrFinishQuestion(targetChannel) {
+    const threadId = targetChannel.id;
+    const pending = pendingQuestions.get(threadId);
+    if (!pending) return;
+
+    if (pending.currentIndex < pending.questions.length - 1) {
+        pending.currentIndex += 1;
+        await renderCurrentQuestion(targetChannel);
+        return;
+    }
+
+    // All questions answered — reply to the canUseTool control_request.
+    const child = activeProcesses.get(threadId);
+    pendingQuestions.delete(threadId);
+    if (!child) {
+        await targetChannel.send('*(Answers collected, but the Claude process is no longer running.)*').catch(() => {});
+        return;
+    }
+    const ok = writeStdin(child, {
+        type: 'control_response',
+        response: {
+            subtype: 'success',
+            request_id: pending.requestId,
+            response: {
+                behavior: 'allow',
+                updatedInput: {
+                    questions: pending.originalInput.questions,
+                    answers: pending.answers,
+                },
+            },
+        },
+    });
+    if (!ok) {
+        await targetChannel.send('*(Failed to send answers — Claude stdin closed.)*').catch(() => {});
+    }
+}
+
+async function disableQuestionComponents(pending, summary) {
+    for (const msg of pending.messages) {
+        try {
+            await msg.edit({ content: msg.content + (summary ? `\n\n✅ ${summary}` : ''), components: [] });
+        } catch { }
+    }
+}
+
+// --- STREAM-JSON STDIN HELPERS ---
+function writeStdin(child, payload) {
+    if (!child?.stdin || child.stdin.destroyed) return false;
+    try {
+        child.stdin.write(JSON.stringify(payload) + '\n');
+        return true;
+    } catch (e) {
+        console.error('[DEBUG] Failed to write to claude stdin:', e.message);
+        return false;
+    }
+}
+
+function writeUserText(child, text) {
+    return writeStdin(child, {
+        type: 'user',
+        message: { role: 'user', content: text },
+    });
+}
+
 client.on(Events.ClientReady, () => {
     console.log('--------------------------------------------------');
     console.log(`[DEBUG] SHADOW CUBE V3.2 (STREAMING + WORKTREES) ONLINE`);
     console.log(`[DEBUG] PROJECT_DIR: ${PROJECT_DIR}`);
     console.log(`[DEBUG] WORKTREES_BASE: ${WORKTREES_BASE}`);
     console.log('--------------------------------------------------');
+});
+
+client.on(Events.InteractionCreate, async (interaction) => {
+    if (!interaction.isButton() && !interaction.isStringSelectMenu()) return;
+    const customId = interaction.customId || '';
+    if (!customId.startsWith('auq:')) return;
+
+    const parts = customId.split(':');
+    const kind = parts[1];
+    const token = parts[2];
+    const questionIndex = Number(parts[3]);
+
+    const threadId = interaction.channelId;
+    const pending = pendingQuestions.get(threadId);
+    if (!pending || pending.token !== token) {
+        await interaction.reply({ content: 'This question is no longer active.', ephemeral: true }).catch(() => {});
+        return;
+    }
+    if (questionIndex !== pending.currentIndex) {
+        await interaction.reply({ content: 'Answer the current question first.', ephemeral: true }).catch(() => {});
+        return;
+    }
+
+    const q = pending.questions[questionIndex];
+
+    if (kind === 'btn') {
+        const optionIndex = Number(parts[4]);
+        const label = q.options[optionIndex]?.label;
+        if (label == null) {
+            await interaction.reply({ content: 'Invalid option.', ephemeral: true }).catch(() => {});
+            return;
+        }
+        pending.answers[q.question] = label;
+        await interaction.update({
+            content: interaction.message.content + `\n\n✅ **${label}**`,
+            components: [],
+        }).catch(() => {});
+        await advanceOrFinishQuestion(interaction.channel);
+        return;
+    }
+
+    if (kind === 'select') {
+        const values = interaction.values || [];
+        const labels = values.map(v => q.options[Number(v)]?.label).filter(Boolean);
+        if (labels.length === 0) {
+            await interaction.reply({ content: 'No valid options selected.', ephemeral: true }).catch(() => {});
+            return;
+        }
+        pending.answers[q.question] = q.multiSelect ? labels : labels[0];
+        await interaction.update({
+            content: interaction.message.content + `\n\n✅ ${labels.map(l => `**${l}**`).join(', ')}`,
+            components: [],
+        }).catch(() => {});
+        await advanceOrFinishQuestion(interaction.channel);
+        return;
+    }
+
+    if (kind === 'custom') {
+        pending.awaitingCustomFor = questionIndex;
+        await interaction.update({
+            content: interaction.message.content + `\n\n✏️ *Reply in this thread with your custom answer…*`,
+            components: [],
+        }).catch(() => {});
+        return;
+    }
 });
 
 // --- 3. THE EXECUTOR ---
@@ -320,7 +577,7 @@ function runClaude(prompt, targetChannel) {
         `.claude/projects/${activePathKey}/sessions-index.json`
     );
 
-    const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--dangerously-skip-permissions'];
+    const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--dangerously-skip-permissions', '--permission-prompt-tool', 'stdio'];
     let systemPrompt = `The base branch for this worktree is \`${baseBranch}\`. Use \`${baseBranch}\` as the target for PRs, diffs, and comparisons — not \`main\` or \`master\` unless they match.`;
 
     // Append channel-specific rule if set
@@ -336,15 +593,19 @@ function runClaude(prompt, targetChannel) {
     }
 
     console.log(`[DEBUG] [Thread: ${threadId}] SPAWNING CLAUDE in ${activeCwd} (branch: ${branchName(sanitizeChannelName(channelName))})...`);
-    // Keep stdin as pipe so we can send permission approvals from Discord
+    // Keep stdin as pipe so we can send follow-ups, tool_results, and approvals from Discord
     const child = spawn('claude', args, { cwd: activeCwd });
 
     activeProcesses.set(threadId, child);
+
+    // Kick off the conversation with the initial prompt as a stream-json envelope.
+    writeUserText(child, prompt);
 
     let thinkingBuffer = '';
     let textBuffer = '';
     let currentBlockType = null;
     let currentToolName = null;
+    let currentToolUseId = null;
     let toolInputBuffer = '';
     let thinkingMessage = null;
     let textMessage = null;
@@ -493,6 +754,7 @@ function runClaude(prompt, targetChannel) {
                 currentBlockType = evt.content_block.type;
                 if (currentBlockType === 'tool_use') {
                     currentToolName = evt.content_block.name || null;
+                    currentToolUseId = evt.content_block.id || null;
                     toolInputBuffer = '';
                 }
             }
@@ -529,12 +791,37 @@ function runClaude(prompt, targetChannel) {
                     sendOrEditText(true, snap);
                 }
                 if (currentBlockType === 'tool_use' && currentToolName) {
-                    sendToolUse(currentToolName, toolInputBuffer);
+                    // AskUserQuestion is rendered when its control_request arrives, not here.
+                    if (currentToolName !== 'AskUserQuestion') {
+                        sendToolUse(currentToolName, toolInputBuffer);
+                    }
                     currentToolName = null;
+                    currentToolUseId = null;
                     toolInputBuffer = '';
                 }
                 currentBlockType = null;
             }
+        }
+
+        // Permission/clarification requests routed through --permission-prompt-tool stdio.
+        if (data.type === 'control_request' && data.request?.subtype === 'can_use_tool') {
+            const req = data.request;
+            const requestId = data.request_id;
+            if (req.tool_name === 'AskUserQuestion') {
+                handleAskUserQuestion(targetChannel, child, requestId, req.tool_use_id, req.input || {});
+            } else {
+                // Other tools shouldn't reach here while --dangerously-skip-permissions is set,
+                // but auto-allow defensively so the agent never deadlocks.
+                writeStdin(child, {
+                    type: 'control_response',
+                    response: {
+                        subtype: 'success',
+                        request_id: requestId,
+                        response: { behavior: 'allow', updatedInput: req.input || {} },
+                    },
+                });
+            }
+            return;
         }
 
         // Capture session ID from result
@@ -582,6 +869,11 @@ function runClaude(prompt, targetChannel) {
         })();
 
         activeProcesses.delete(threadId);
+        const pending = pendingQuestions.get(threadId);
+        if (pending) {
+            pendingQuestions.delete(threadId);
+            disableQuestionComponents(pending, 'Session ended.').catch(() => {});
+        }
         console.log(`[DEBUG] [Thread: ${threadId}] PROCESS EXITED (Code: ${code})`);
 
         const sid = resultSessionId || getLatestSessionId(sessionIndexPath);
@@ -799,6 +1091,11 @@ client.on(Events.MessageCreate, async (message) => {
                 activeProcesses.get(threadId).kill();
                 activeProcesses.delete(threadId);
             }
+            const pending = pendingQuestions.get(threadId);
+            if (pending) {
+                pendingQuestions.delete(threadId);
+                disableQuestionComponents(pending, 'Session cleared.').catch(() => {});
+            }
         }
 
         let extra = '';
@@ -845,12 +1142,25 @@ client.on(Events.MessageCreate, async (message) => {
 
     if (!cleanPrompt) return;
 
+    // --- If a pending AskUserQuestion is waiting for a custom-answer text reply, consume it ---
+    if (threadId && pendingQuestions.has(threadId)) {
+        const pending = pendingQuestions.get(threadId);
+        if (pending.awaitingCustomFor === pending.currentIndex) {
+            const q = pending.questions[pending.currentIndex];
+            pending.answers[q.question] = q.multiSelect ? [cleanPrompt] : cleanPrompt;
+            pending.awaitingCustomFor = null;
+            await message.react('✏️');
+            await advanceOrFinishQuestion(message.channel);
+            return;
+        }
+    }
+
     // --- If there's an active process in this thread, pipe input to stdin (approvals, follow-ups) ---
     if (threadId && activeProcesses.has(threadId)) {
         const child = activeProcesses.get(threadId);
         if (child.stdin && !child.stdin.destroyed) {
             console.log(`[DEBUG] Piping Discord input to Claude stdin in ${threadId}: "${cleanPrompt}"`);
-            child.stdin.write(cleanPrompt + '\n');
+            writeUserText(child, cleanPrompt);
             await message.react('📨');
         } else {
             console.log(`[DEBUG] stdin closed for ${threadId}, starting new process`);
