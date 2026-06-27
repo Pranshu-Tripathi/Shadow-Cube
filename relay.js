@@ -7,6 +7,7 @@ const path = require('path');
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const PROJECT_DIR = process.env.PROJECT_DIR || process.cwd();
 const BRANCH_PREFIX = process.env.BRANCH_PREFIX != null ? process.env.BRANCH_PREFIX : 'shadow-cube';
+const GITHUB_PAT = process.env.GITHUB_PAT;
 
 if (!DISCORD_TOKEN) {
     console.error('DISCORD_TOKEN is required. Set it in your .env file.');
@@ -198,12 +199,157 @@ function getBaseBranch(channelId) {
     return (config[channelId] && config[channelId].baseBranch) || getDefaultBranch();
 }
 
+// --- GITHUB REPO READS ---
+// Normalize an `owner/repo` slug or a GitHub URL down to `owner/repo`.
+function normalizeRepoSlug(input) {
+    let repo = input.trim();
+    const m = repo.match(/github\.com[/:]([^/\s]+\/[^/\s]+?)(?:\.git)?\/?$/i);
+    if (m) repo = m[1];
+    return /^[^/\s]+\/[^/\s]+$/.test(repo) ? repo : null;
+}
+
+function ghHeaders(accept) {
+    const headers = { 'Accept': accept || 'application/vnd.github+json', 'User-Agent': 'shadow-cube-bridge' };
+    if (GITHUB_PAT) headers['Authorization'] = `Bearer ${GITHUB_PAT}`;
+    return headers;
+}
+
+async function ghDefaultBranch(repo) {
+    const res = await fetch(`https://api.github.com/repos/${repo}`, { headers: ghHeaders() });
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText} fetching repo metadata`);
+    return (await res.json()).default_branch;
+}
+
+// Returns raw file bytes as a Buffer (binary-safe).
+async function ghFetchFile(repo, filePath, ref) {
+    const url = `https://api.github.com/repos/${repo}/contents/${encodeURI(filePath)}${ref ? `?ref=${encodeURIComponent(ref)}` : ''}`;
+    const res = await fetch(url, { headers: ghHeaders('application/vnd.github.raw') });
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText} fetching ${filePath}`);
+    return Buffer.from(await res.arrayBuffer());
+}
+
+// Returns the full recursive tree: [{ path, type: 'blob' | 'tree' }, ...].
+async function ghListTree(repo, ref) {
+    const res = await fetch(`https://api.github.com/repos/${repo}/git/trees/${ref}?recursive=1`, { headers: ghHeaders() });
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText} listing tree`);
+    return (await res.json()).tree || [];
+}
+
+// --- GITHUB WRITES (for !memory -remote PRs) ---
+async function ghGetRefSha(repo, branch) {
+    const res = await fetch(`https://api.github.com/repos/${repo}/git/ref/heads/${encodeURIComponent(branch)}`, { headers: ghHeaders() });
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText} resolving ${branch}`);
+    return (await res.json()).object.sha;
+}
+
+async function ghCreateBranch(repo, newBranch, fromSha) {
+    const res = await fetch(`https://api.github.com/repos/${repo}/git/refs`, {
+        method: 'POST',
+        headers: { ...ghHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ref: `refs/heads/${newBranch}`, sha: fromSha }),
+    });
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText} creating branch ${newBranch}`);
+}
+
+async function ghPutFile(repo, filePath, contentBuf, branch, commitMessage) {
+    // Look up the blob sha if the file already exists on this branch (required to update).
+    let sha;
+    try {
+        const getRes = await fetch(`https://api.github.com/repos/${repo}/contents/${encodeURI(filePath)}?ref=${encodeURIComponent(branch)}`, { headers: ghHeaders() });
+        if (getRes.ok) sha = (await getRes.json()).sha;
+    } catch { }
+    const res = await fetch(`https://api.github.com/repos/${repo}/contents/${encodeURI(filePath)}`, {
+        method: 'PUT',
+        headers: { ...ghHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: commitMessage, content: contentBuf.toString('base64'), branch, ...(sha ? { sha } : {}) }),
+    });
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText} writing ${filePath}`);
+}
+
+async function ghOpenPR(repo, head, base, title, body) {
+    const res = await fetch(`https://api.github.com/repos/${repo}/pulls`, {
+        method: 'POST',
+        headers: { ...ghHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title, head, base, body }),
+    });
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText} opening PR`);
+    return (await res.json()).html_url;
+}
+
+// --- WORKTREE MEMORY (learned lessons, layered after the system prompt) ---
+function memoryDir(worktreePath) {
+    return path.join(worktreePath, '.memory');
+}
+
+function listMemoryFiles(worktreePath) {
+    const dir = memoryDir(worktreePath);
+    try {
+        if (!fs.existsSync(dir)) return [];
+        return fs.readdirSync(dir).filter(f => f.endsWith('.md')).sort();
+    } catch {
+        return [];
+    }
+}
+
+function readWorktreeMemory(worktreePath) {
+    const dir = memoryDir(worktreePath);
+    const parts = listMemoryFiles(worktreePath)
+        .map(f => fs.readFileSync(path.join(dir, f), 'utf8').trim())
+        .filter(Boolean);
+    return parts.join('\n\n');
+}
+
+function memorySlug(text) {
+    return text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'note';
+}
+
+function writeMemoryFile(worktreePath, text) {
+    const dir = memoryDir(worktreePath);
+    fs.mkdirSync(dir, { recursive: true });
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    const name = `${ts}-${memorySlug(text)}.md`;
+    fs.writeFileSync(path.join(dir, name), `${text.trim()}\n`);
+    return name;
+}
+
 function sanitizeChannelName(name) {
     return name.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
 }
 
 function branchName(sanitizedChannel) {
     return BRANCH_PREFIX ? `${BRANCH_PREFIX}/${sanitizedChannel}` : sanitizedChannel;
+}
+
+// Files/dirs the bot writes into each worktree that should never show up in the
+// target repo's `git status`. Added to the worktree's local exclude file rather
+// than the tracked .gitignore so the user's repo is never modified.
+const WORKTREE_EXCLUDES = ['.out/', '.skills/', '.claude/', '.memory/', '.shadow-cube-base'];
+
+function setupWorktreeScaffolding(worktreePath) {
+    // Ensure .out exists from the start (previously had to be created by hand).
+    try {
+        fs.mkdirSync(path.join(worktreePath, '.out'), { recursive: true });
+    } catch (e) {
+        console.error(`[DEBUG] Failed to create .out in ${worktreePath}:`, e.message);
+    }
+
+    // Idempotently add bot artifacts to the worktree's local exclude file.
+    try {
+        const rel = execSync('git rev-parse --git-path info/exclude', { cwd: worktreePath, encoding: 'utf8' }).trim();
+        const excludePath = path.isAbsolute(rel) ? rel : path.join(worktreePath, rel);
+        let existing = '';
+        try { existing = fs.readFileSync(excludePath, 'utf8'); } catch { }
+        const present = new Set(existing.split('\n').map(l => l.trim()));
+        const missing = WORKTREE_EXCLUDES.filter(l => !present.has(l));
+        if (missing.length) {
+            fs.mkdirSync(path.dirname(excludePath), { recursive: true });
+            const prefix = existing && !existing.endsWith('\n') ? '\n' : '';
+            fs.appendFileSync(excludePath, `${prefix}${missing.join('\n')}\n`);
+            console.log(`[DEBUG] Added excludes [${missing.join(', ')}] to ${excludePath}`);
+        }
+    } catch (e) {
+        console.error(`[DEBUG] Failed to set up excludes in ${worktreePath}:`, e.message);
+    }
 }
 
 function createWorktree(worktreePath, branch, baseBranch) {
@@ -222,6 +368,8 @@ function createWorktree(worktreePath, branch, baseBranch) {
 
         // Store base branch marker for mismatch detection
         fs.writeFileSync(path.join(worktreePath, '.shadow-cube-base'), baseBranch);
+
+        setupWorktreeScaffolding(worktreePath);
 
         console.log(`[DEBUG] Created worktree: ${worktreePath} (branch: ${branch}, base: ${baseBranch})`);
         return worktreePath;
@@ -263,6 +411,8 @@ function ensureWorktree(channelName, baseBranch) {
                 }
             }
         }
+        // Backfill scaffolding for worktrees created before this existed.
+        setupWorktreeScaffolding(worktreePath);
         console.log(`[DEBUG] Worktree already exists: ${worktreePath}`);
         return worktreePath;
     }
@@ -585,6 +735,12 @@ function runClaude(prompt, targetChannel) {
     const channelRule = channelConfig[channelId]?.systemPrompt;
     if (channelRule) {
         systemPrompt += `\n\n${channelRule}`;
+    }
+
+    // Learned memory layer (kept separate so !repo re-pulls never clobber it)
+    const memory = readWorktreeMemory(activeCwd);
+    if (memory) {
+        systemPrompt += `\n\n# Learned memory — past corrections, do not repeat these mistakes\n${memory}`;
     }
 
     args.push('--append-system-prompt', systemPrompt);
@@ -1080,6 +1236,217 @@ client.on(Events.MessageCreate, async (message) => {
         } catch (e) {
             return message.reply(`**Failed to download attachment:** ${e.message}`);
         }
+    }
+
+    // --- !repo command ---
+    const repoConfigMatch = cleanPrompt.match(/^!repo\s+(?:--config|-config)\s+(\S+)$/i);
+    if (repoConfigMatch) {
+        const channelId = getParentChannelId(message.channel);
+        const repo = normalizeRepoSlug(repoConfigMatch[1]);
+        if (!repo) {
+            return message.reply('**Invalid repo.** Use `owner/repo` or a GitHub URL.');
+        }
+        const config = loadChannelConfig();
+        config[channelId] = { ...(config[channelId] || {}), rulesRepo: repo };
+        saveChannelConfig(config);
+        const warn = GITHUB_PAT ? '' : '\n⚠️ `GITHUB_PAT` is not set — private repos will fail.';
+        return message.reply(`**Rules repo set to \`${repo}\` for this channel.**${warn}`);
+    }
+
+    const repoViewMatch = cleanPrompt.match(/^!repo\s+(?:--view|-view)$/i);
+    if (repoViewMatch) {
+        const channelId = getParentChannelId(message.channel);
+        const repo = loadChannelConfig()[channelId]?.rulesRepo;
+        return message.reply(repo
+            ? `**Rules repo for this channel:** \`${repo}\``
+            : '**No rules repo set.** Use `!repo -config owner/repo`.');
+    }
+
+    if (/^!repo\b/i.test(cleanPrompt)) {
+        const channelId = getParentChannelId(message.channel);
+        const channelName = getParentChannelName(message.channel);
+
+        const wantPrompt = /(?:^|\s)(?:--prompt|-prompt)(?:\s|$)/i.test(cleanPrompt);
+        const wantSkill = /(?:^|\s)(?:--skill|-skill)(?:\s|$)/i.test(cleanPrompt);
+        const pathMatch = cleanPrompt.match(/(?:--path|-path)\s+(\S+)/i);
+
+        if (!wantPrompt && !wantSkill) {
+            return message.reply([
+                '**Usage:**',
+                '`!repo -config owner/repo` — set the repo for this channel',
+                '`!repo -prompt -skill -path <dir>` — pull from the repo (`-path` is repo-root-relative)',
+                '`-prompt` sets the system prompt from `<dir>/system.md`.',
+                '`-skill` pulls `<dir>/skills/**` into the worktree (`.skills/`, mirrored to `.claude/skills/`).',
+                '`!repo -view` — show the configured repo.',
+            ].join('\n'));
+        }
+
+        const repo = loadChannelConfig()[channelId]?.rulesRepo;
+        if (!repo) {
+            return message.reply('**No rules repo set.** Use `!repo -config owner/repo` first.');
+        }
+        const relPath = (pathMatch ? pathMatch[1] : '').replace(/^\/+|\/+$/g, '');
+
+        // Remember the path so `!memory -remote` knows where to open PRs.
+        {
+            const config = loadChannelConfig();
+            config[channelId] = { ...(config[channelId] || {}), rulesPath: relPath };
+            saveChannelConfig(config);
+        }
+
+        try {
+            const ref = await ghDefaultBranch(repo);
+            const results = [];
+
+            if (wantPrompt) {
+                const promptPath = relPath ? `${relPath}/system.md` : 'system.md';
+                const content = (await ghFetchFile(repo, promptPath, ref)).toString('utf8');
+                const config = loadChannelConfig();
+                config[channelId] = { ...(config[channelId] || {}), systemPrompt: content };
+                saveChannelConfig(config);
+                results.push(`✅ system prompt set from \`${promptPath}\` (${content.length} chars)`);
+            }
+
+            if (wantSkill) {
+                const baseBranch = getBaseBranch(channelId);
+                const worktreePath = ensureWorktree(channelName, baseBranch);
+                const skillsPrefix = relPath ? `${relPath}/skills/` : 'skills/';
+                const tree = await ghListTree(repo, ref);
+                const blobs = tree.filter(e => e.type === 'blob' && e.path.startsWith(skillsPrefix));
+                if (!blobs.length) {
+                    results.push(`⚠️ no files found under \`${skillsPrefix}\``);
+                } else {
+                    const dests = [path.join(worktreePath, '.skills'), path.join(worktreePath, '.claude', 'skills')];
+                    // Clear existing skill dirs so removed skills don't linger.
+                    for (const dest of dests) fs.rmSync(dest, { recursive: true, force: true });
+                    for (const blob of blobs) {
+                        const rel = blob.path.slice(skillsPrefix.length);
+                        const content = await ghFetchFile(repo, blob.path, ref);
+                        for (const dest of dests) {
+                            const target = path.join(dest, rel);
+                            fs.mkdirSync(path.dirname(target), { recursive: true });
+                            fs.writeFileSync(target, content);
+                        }
+                    }
+                    results.push(`✅ pulled ${blobs.length} skill file(s) into \`.skills/\` (mirrored to \`.claude/skills/\`)`);
+                }
+            }
+
+            return message.reply(`**Repo pull from \`${repo}\` (ref \`${ref}\`):**\n${results.join('\n')}`);
+        } catch (e) {
+            return message.reply(`**Failed to pull from \`${repo}\`:** ${e.message}`);
+        }
+    }
+
+    // --- !memory command ---
+    const memViewMatch = cleanPrompt.match(/^!memory\s+(?:--view|-view)$/i);
+    if (memViewMatch) {
+        const channelName = getParentChannelName(message.channel);
+        const channelId = getParentChannelId(message.channel);
+        const worktreePath = ensureWorktree(channelName, getBaseBranch(channelId));
+        const files = listMemoryFiles(worktreePath);
+        if (!files.length) {
+            return message.reply('**No memory for this channel.** Use `!memory <note>` to add one.');
+        }
+        const dir = memoryDir(worktreePath);
+        const body = files.map(f => `• \`${f}\`\n${fs.readFileSync(path.join(dir, f), 'utf8').trim()}`).join('\n\n');
+        const chunks = splitForDiscord(`**Memory for this channel (${files.length}):**\n\n${body}`);
+        for (const chunk of chunks) await message.reply(chunk);
+        return;
+    }
+
+    const memWipeMatch = cleanPrompt.match(/^!memory\s+(?:--wipe|-wipe|-w)$/i);
+    if (memWipeMatch) {
+        const channelName = getParentChannelName(message.channel);
+        const channelId = getParentChannelId(message.channel);
+        const worktreePath = ensureWorktree(channelName, getBaseBranch(channelId));
+        fs.rmSync(memoryDir(worktreePath), { recursive: true, force: true });
+        return message.reply('**Memory cleared for this channel.**');
+    }
+
+    const memRemoteMatch = cleanPrompt.match(/^!memory\s+(?:--remote|-remote)$/i);
+    if (memRemoteMatch) {
+        const channelName = getParentChannelName(message.channel);
+        const channelId = getParentChannelId(message.channel);
+        const sanitized = sanitizeChannelName(channelName);
+        const config = loadChannelConfig();
+        const repo = config[channelId]?.rulesRepo;
+        if (!repo) {
+            return message.reply('**No rules repo set.** Use `!repo -config owner/repo` first.');
+        }
+        if (!GITHUB_PAT) {
+            return message.reply('**`GITHUB_PAT` is not set.** A write-scoped token (`Contents: RW` + `Pull requests: RW`) is required to open PRs.');
+        }
+        const worktreePath = ensureWorktree(channelName, getBaseBranch(channelId));
+        const files = listMemoryFiles(worktreePath);
+        if (!files.length) {
+            return message.reply('**No local memory to promote.** Add some with `!memory <note>` first.');
+        }
+        const relPath = config[channelId]?.rulesPath || '';
+        const memBase = relPath ? `${relPath}/memory` : 'memory';
+        const dir = memoryDir(worktreePath);
+
+        try {
+            const ref = await ghDefaultBranch(repo);
+            const baseSha = await ghGetRefSha(repo, ref);
+            const ts = new Date().toISOString().replace(/[:.]/g, '-');
+            const newBranch = `shadow-cube-memory/${sanitized}-${ts}`;
+            await ghCreateBranch(repo, newBranch, baseSha);
+            for (const f of files) {
+                const buf = fs.readFileSync(path.join(dir, f));
+                await ghPutFile(repo, `${memBase}/${f}`, buf, newBranch, `memory: add ${f}`);
+            }
+            const body = `Promoted ${files.length} learned memory file(s) from Discord channel \`${channelName}\`:\n\n${files.map(f => `- \`${memBase}/${f}\``).join('\n')}`;
+            const prUrl = await ghOpenPR(repo, newBranch, ref, `Memory update from #${channelName}`, body);
+            return message.reply(`**Opened PR with ${files.length} memory file(s):**\n${prUrl}`);
+        } catch (e) {
+            return message.reply(`**Failed to open memory PR on \`${repo}\`:** ${e.message}`);
+        }
+    }
+
+    const memAgenticMatch = cleanPrompt.match(/^!memory\s+(?:--agentic|-agentic)\s*(.*)$/i);
+    if (memAgenticMatch) {
+        const note = memAgenticMatch[1].trim();
+        const instruction = [
+            'Reflect on this conversation — especially the most recent mistake or correction',
+            note ? ` (context from me: ${note})` : '',
+            '. Distill it into ONE concise, durable rule (1–3 lines) that will prevent the mistake from recurring.',
+            ' Create the `.memory/` directory in the current working directory if needed, then use the Write tool to save the rule to a new file `.memory/<short-kebab-name>.md`.',
+            ' Write only the rule itself in the file (no preamble). Then reply with a one-line confirmation of what you saved.',
+        ].join('');
+
+        if (threadId && activeProcesses.has(threadId)) {
+            const child = activeProcesses.get(threadId);
+            if (child.stdin && !child.stdin.destroyed) {
+                writeUserText(child, instruction);
+                await message.react('🧠');
+                return;
+            }
+            activeProcesses.delete(threadId);
+        }
+        await message.react('🧠');
+        runClaude(instruction, message.channel);
+        return;
+    }
+
+    const memAddMatch = cleanPrompt.match(/^!memory\s+(.+)$/is);
+    if (memAddMatch) {
+        const channelName = getParentChannelName(message.channel);
+        const channelId = getParentChannelId(message.channel);
+        const worktreePath = ensureWorktree(channelName, getBaseBranch(channelId));
+        const name = writeMemoryFile(worktreePath, memAddMatch[1]);
+        return message.reply(`**Memory saved** (\`${name}\`). It will apply from the next message. Use \`!memory -remote\` to open a PR promoting it to the repo.`);
+    }
+
+    if (/^!memory$/i.test(cleanPrompt)) {
+        return message.reply([
+            '**Usage:**',
+            '`!memory <note>` — save a lesson verbatim (applies next message)',
+            '`!memory -agentic [hint]` — have the agent distill the lesson from this conversation and save it',
+            '`!memory -remote` — open a PR promoting this channel\'s memory to the rules repo',
+            '`!memory -view` — list saved memory',
+            '`!memory -wipe` — clear this channel\'s memory',
+        ].join('\n'));
     }
 
     // --- !clear command ---
