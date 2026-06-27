@@ -51,6 +51,7 @@ A Discord bot that bridges Claude Code CLI to Discord. Send prompts in a channel
    - `PROJECT_DIR` - The directory Claude Code will operate in (must be a git repository)
    - `WORKTREES_DIR` *(optional)* - Custom location for git worktrees (default: `PROJECT_DIR/../.shadow-cube-worktrees`)
    - `BRANCH_PREFIX` *(optional)* - Prefix for worktree branch names (default: `shadow-cube`). Set to empty string for no prefix.
+   - `GITHUB_PAT` *(optional)* - GitHub personal access token used by `!repo` to read prompts/skills (required for private repos)
 
 5. Run the bot:
    ```bash
@@ -66,6 +67,33 @@ A Discord bot that bridges Claude Code CLI to Discord. Send prompts in a channel
 - **`!clear --worktree`** (or `!clear -w`) in a thread to also remove the channel's git worktree
 - **`!base <branch>`** in a channel to set the base branch for that channel's worktree (persists across restarts)
 - **`!worktrees`** to list all active git worktrees
+- **`!repo`** to pull a system prompt and skills from a configured GitHub repo (see below)
+- **`!memory`** to teach the channel a lasting lesson that's layered onto its system prompt (see below)
+
+## System Prompts & Skills from a Repo
+
+`!repo` lets each channel pull its system prompt and skills from a GitHub repo (private repos need `GITHUB_PAT`):
+
+- **`!repo -config owner/repo`** - set the rules repo for this channel (accepts a slug or GitHub URL)
+- **`!repo -prompt -skill -path <dir>`** - pull from the repo, where `<dir>` is repo-root-relative:
+  - `-prompt` reads `<dir>/system.md` and sets it as the channel's system prompt
+  - `-skill` pulls `<dir>/skills/**` into the worktree's generic `.skills/` (mirrored to `.claude/skills/` so the current Claude session can use them)
+  - both flags are optional; use either or both
+- **`!repo -view`** - show the configured repo
+
+Skills are stored under `.skills/` (provider-neutral) and mirrored to `.claude/skills/`. Each pull replaces the previous skill files.
+
+## Channel Memory
+
+`!memory` lets a channel accumulate lessons ("don't make this mistake again") that are layered onto the system prompt **after** the `!repo`/`!rule` prompt — so re-pulling the repo prompt never wipes them. Memory lives as one file per lesson in the worktree's `.memory/` directory.
+
+- **`!memory <note>`** - save a lesson verbatim; applies from the next message
+- **`!memory -agentic [hint]`** - have the agent distill the lesson from the current conversation and write it itself (the optional hint steers what to capture)
+- **`!memory -remote`** - open a PR promoting this channel's memory files to `<dir>/memory/` in the configured rules repo (needs a write-scoped `GITHUB_PAT`: `Contents: Read & Write` + `Pull requests: Read & Write`)
+- **`!memory -view`** - list the channel's saved memory
+- **`!memory -wipe`** - clear the channel's memory
+
+Memory is local to the worktree (and removed with `!clear --worktree`/`!destroy`); use `!memory -remote` to persist lessons to the repo so they survive and can be shared.
 
 ## Git Worktrees
 
@@ -75,6 +103,7 @@ Each Discord channel automatically gets its own [git worktree](https://git-scm.c
 - Worktree location: `WORKTREES_DIR` or `PROJECT_DIR/../.shadow-cube-worktrees/<channel-name>`
 - Set base branch per channel: `!base feature/my-branch`
 - If worktree creation fails, the bot falls back to `PROJECT_DIR`
+- Each worktree is scaffolded with an `.out/` directory on creation; bot artifacts (`.out/`, `.skills/`, `.claude/`, `.shadow-cube-base`) are added to the worktree's local git exclude so they never appear in the target repo's `git status`
 
 ## How It Works
 
