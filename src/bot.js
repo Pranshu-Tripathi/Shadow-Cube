@@ -13,7 +13,7 @@ const { createRulesRepoService } = require('./github/rulesRepoService');
 const { createClaudeRunner } = require('./providers/claude/claudeRunner');
 const { createAgentRouter } = require('./providers/agentRouter');
 const { createCommandRegistry } = require('./commands/registry');
-const { runCodex, clearCodexSession, handleCodexApproval } = require('../codex');
+const { runCodex, clearCodexSession, handleCodexApproval } = require('./providers/codex');
 
 function createBot() {
     if (!config.DISCORD_TOKEN) {
