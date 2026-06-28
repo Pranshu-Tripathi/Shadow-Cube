@@ -2,6 +2,7 @@ const { Client, GatewayIntentBits, Partials, Events, ActionRowBuilder, ButtonBui
 const { spawn, execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const { runCodex, clearCodexSession, handleCodexApproval } = require('./codex');
 
 // --- 1. CONFIGURATION ---
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
@@ -647,6 +648,8 @@ client.on(Events.ClientReady, () => {
 client.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isButton() && !interaction.isStringSelectMenu()) return;
     const customId = interaction.customId || '';
+    // Codex approval buttons are owned by codex.js.
+    if (customId.startsWith('cxa:')) return handleCodexApproval(interaction);
     if (!customId.startsWith('auq:')) return;
 
     const parts = customId.split(':');
@@ -1039,12 +1042,64 @@ function runClaude(prompt, targetChannel) {
     });
 }
 
+// --- PROVIDER DISPATCH ---
+// Per-channel provider selection (default: claude). Codex logic lives in codex.js and is
+// reached via runAgent so runClaude and its helpers stay untouched.
+function getProvider(channelId) {
+    const config = loadChannelConfig();
+    return config[channelId]?.provider || 'claude';
+}
+
+// Shared, provider-agnostic helpers handed to the Codex engine.
+const codexDeps = {
+    splitForDiscord,
+    prettifyCodeBlocks,
+    detectLanguage,
+    ensureWorktree,
+    getParentChannelName,
+    getParentChannelId,
+    getBaseBranch,
+    loadChannelConfig,
+    readWorktreeMemory,
+    PROJECT_DIR,
+};
+
+function runAgent(prompt, targetChannel) {
+    const channelId = getParentChannelId(targetChannel);
+    if (getProvider(channelId) === 'codex') {
+        return runCodex(prompt, targetChannel, codexDeps);
+    }
+    return runClaude(prompt, targetChannel);
+}
+
 // --- 4. THE HANDLER ---
 client.on(Events.MessageCreate, async (message) => {
     if (message.author.bot) return;
 
     const cleanPrompt = stripDiscordTags(message.content);
     const threadId = message.channel.isThread() ? message.channel.id : null;
+
+    // --- !provider command ---
+    const providerMatch = cleanPrompt.match(/^!provider\s+(claude|codex)$/i);
+    if (providerMatch) {
+        const provider = providerMatch[1].toLowerCase();
+        const channelId = getParentChannelId(message.channel);
+        const config = loadChannelConfig();
+        config[channelId] = { ...(config[channelId] || {}), provider };
+        saveChannelConfig(config);
+        return message.reply(`**Provider set to \`${provider}\`** for this channel. It applies from the next message.`);
+    }
+
+    if (/^!provider$/i.test(cleanPrompt)) {
+        const current = getProvider(getParentChannelId(message.channel));
+        return message.reply([
+            `**Current provider:** \`${current}\``,
+            '',
+            '**Usage:**',
+            '`!provider claude` — use Claude Code (default, full streaming + approvals)',
+            '`!provider codex` — use Codex (`codex` CLI must be installed & authed)',
+        ].join('\n'));
+    }
 
     // --- !base command ---
     const baseMatch = cleanPrompt.match(/^!base\s+(.+)$/i);
@@ -1425,7 +1480,7 @@ client.on(Events.MessageCreate, async (message) => {
             activeProcesses.delete(threadId);
         }
         await message.react('🧠');
-        runClaude(instruction, message.channel);
+        runAgent(instruction, message.channel);
         return;
     }
 
@@ -1454,6 +1509,7 @@ client.on(Events.MessageCreate, async (message) => {
     if (clearWithWorktree) {
         if (threadId) {
             clearSession(threadId);
+            clearCodexSession(threadId);
             if (activeProcesses.has(threadId)) {
                 activeProcesses.get(threadId).kill();
                 activeProcesses.delete(threadId);
@@ -1484,6 +1540,7 @@ client.on(Events.MessageCreate, async (message) => {
         // Kill active process and clear session
         if (threadId) {
             clearSession(threadId);
+            clearCodexSession(threadId);
             if (activeProcesses.has(threadId)) {
                 activeProcesses.get(threadId).kill();
                 activeProcesses.delete(threadId);
@@ -1533,7 +1590,7 @@ client.on(Events.MessageCreate, async (message) => {
             console.log(`[DEBUG] stdin closed for ${threadId}, starting new process`);
             activeProcesses.delete(threadId);
             await message.react('⚙️');
-            runClaude(cleanPrompt, message.channel);
+            runAgent(cleanPrompt, message.channel);
         }
         return;
     }
@@ -1555,7 +1612,7 @@ client.on(Events.MessageCreate, async (message) => {
     }
 
     await message.react('⚙️');
-    runClaude(cleanPrompt, targetChannel);
+    runAgent(cleanPrompt, targetChannel);
 });
 
 // --- GRACEFUL SHUTDOWN ---

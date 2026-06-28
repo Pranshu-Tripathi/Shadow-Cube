@@ -15,6 +15,7 @@ A Discord bot that bridges Claude Code CLI to Discord. Send prompts in a channel
 
 - [Bun](https://bun.sh) runtime
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated (`claude` available in PATH)
+- *(optional)* [Codex CLI](https://developers.openai.com/codex) installed and authenticated (`codex` in PATH) — only needed for channels using `!provider codex`
 - A [Discord bot token](https://discord.com/developers/applications) with the following permissions:
   - Send Messages
   - Send Messages in Threads
@@ -69,6 +70,21 @@ A Discord bot that bridges Claude Code CLI to Discord. Send prompts in a channel
 - **`!worktrees`** to list all active git worktrees
 - **`!repo`** to pull a system prompt and skills from a configured GitHub repo (see below)
 - **`!memory`** to teach the channel a lasting lesson that's layered onto its system prompt (see below)
+- **`!provider claude|codex`** to choose which agent backs the channel (see below)
+
+## Providers (Claude / Codex)
+
+Each channel can be backed by either [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (default) or [Codex](https://developers.openai.com/codex) (`codex` CLI must be installed and authenticated, available in PATH).
+
+- **`!provider`** - show the current provider and usage
+- **`!provider claude`** - use Claude Code (default; full token-by-token streaming, tool diffs, and interactive `AskUserQuestion` approvals)
+- **`!provider codex`** - use Codex via the `codex app-server` protocol
+
+The setting is per-channel and persists across restarts. Worktrees, `!base`, `!repo`, and `!memory` work for both providers; the channel's system prompt + learned memory are passed as Codex `developerInstructions` when a fresh Codex session starts.
+
+**Codex approvals:** Codex runs under the `codex app-server` JSON-RPC protocol with `sandbox = workspace-write` and `approvalPolicy = on-request`. The agent edits files freely inside its worktree and runs sandboxed commands, but when it needs to **escape the sandbox** (network access, writing outside the worktree, risky commands) it asks first — surfaced in Discord as an approval message with **Approve / Approve (session) / Deny / Deny & stop** buttons. (`danger-full-access` is intentionally *not* used: with full access the agent never needs to escalate, so no approvals would ever fire.)
+
+Other Codex notes: the assistant message streams token-by-token (live-edited like Claude); command runs and file changes render as cards; a token-usage footer is posted per turn. A single shared `codex app-server` process multiplexes all Codex channels, and sessions resume across bot restarts via `thread/resume`. Codex session ids are stored separately in `sessions/codex-config.json`.
 
 ## System Prompts & Skills from a Repo
 
@@ -108,3 +124,5 @@ Each Discord channel automatically gets its own [git worktree](https://git-scm.c
 ## How It Works
 
 The bot spawns `claude -p` with `--output-format stream-json` for each query, parsing the JSONL stream to separate thinking blocks, text content, and tool use into distinct Discord messages. Sessions are persisted per-thread so follow-up messages resume the same Claude conversation.
+
+For channels set to `!provider codex`, the bot instead drives a long-lived `codex app-server` process over its NDJSON JSON-RPC protocol (`initialize` → `thread/start`/`thread/resume` → `turn/start`), routing the streamed `item/*` and `turn/*` notifications to Discord and turning `requestApproval` server-requests into Discord approval buttons. Codex lives in `codex.js`, kept separate from the Claude engine in `relay.js`.
