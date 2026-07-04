@@ -25,7 +25,12 @@ function createRulesRepoService({ github, channelStore, worktrees, memory }) {
                 results.push(`⚠️ no files found under \`${skillsPrefix}\``);
             } else {
                 const dests = [path.join(worktreePath, '.skills'), path.join(worktreePath, '.claude', 'skills')];
-                for (const dest of dests) fs.rmSync(dest, { recursive: true, force: true });
+                // Only clear the skill folders we're about to (re)pull, so previously
+                // loaded skills from other paths/pulls are preserved.
+                const topLevel = new Set(blobs.map(b => b.path.slice(skillsPrefix.length).split('/')[0]));
+                for (const dest of dests) {
+                    for (const name of topLevel) fs.rmSync(path.join(dest, name), { recursive: true, force: true });
+                }
                 for (const blob of blobs) {
                     const rel = blob.path.slice(skillsPrefix.length);
                     const content = await github.fetchFile(repo, blob.path, ref);
