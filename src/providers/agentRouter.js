@@ -23,11 +23,15 @@ function createAgentRouter({
         getBaseBranch: worktrees.getBaseBranch,
         loadChannelConfig: channelStore.loadChannelConfig,
         readWorktreeMemory: memory.readWorktreeMemory,
-        PROJECT_DIR: config.PROJECT_DIR,
     };
 
     function runAgent(prompt, targetChannel) {
         const channelId = channelHelpers.getParentChannelId(targetChannel);
+        if (!worktrees.getProjectConfig(channelId)) {
+            return targetChannel
+                .send('**No project set for this channel.** Run `!project -name <name> -path <path>` first.')
+                .catch(() => {});
+        }
         if (getProvider(channelId) === 'codex') {
             return runCodex(prompt, targetChannel, codexDeps);
         }

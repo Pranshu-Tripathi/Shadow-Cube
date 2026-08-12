@@ -4,9 +4,14 @@ function match(cleanPrompt) {
 
 async function execute({ message, context }) {
     const channelName = context.channelHelpers.getParentChannelName(message.channel);
+    const channelId = context.channelHelpers.getParentChannelId(message.channel);
+
+    if (!context.worktrees.getProjectConfig(channelId)) {
+        return message.reply('**No project set for this channel.** Run `!project -name <name> -path <path>` first.');
+    }
 
     try {
-        const result = context.worktrees.pushWorktree(channelName);
+        const result = context.worktrees.pushWorktree(channelName, channelId);
         if (result.missing) {
             return message.reply(`**No worktree found for this channel.** Send a message first to create one.`);
         }

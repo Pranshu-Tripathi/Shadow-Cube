@@ -21,7 +21,7 @@ function createClaudeRunner({
         const channelName = channelHelpers.getParentChannelName(targetChannel);
         const channelId = channelHelpers.getParentChannelId(targetChannel);
         const baseBranch = worktrees.getBaseBranch(channelId);
-        const activeCwd = worktrees.ensureWorktree(channelName, baseBranch);
+        const activeCwd = worktrees.ensureWorktree(channelName, baseBranch, channelId);
 
         const activePathKey = activeCwd.replace(/\//g, '-');
         const sessionIndexPath = path.join(
@@ -70,7 +70,7 @@ function createClaudeRunner({
         const EDIT_INTERVAL = 1500;
         const formatToolUse = createToolFormatter({
             activeCwd,
-            projectDir: config.PROJECT_DIR,
+            projectDir: worktrees.getProjectConfig(channelId).projectDir,
             detectLanguage: formatting.detectLanguage,
         });
 

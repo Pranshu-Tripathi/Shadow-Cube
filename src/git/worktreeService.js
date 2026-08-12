@@ -5,28 +5,55 @@ const path = require('path');
 const WORKTREE_EXCLUDES = ['.out/', '.skills/', '.claude/', '.memory/', '.shadow-cube-base'];
 
 function createWorktreeService({ config, channelStore }) {
-    let cachedDefaultBranch = null;
+    const defaultBranchByProject = new Map();
 
-    function getDefaultBranch() {
-        if (cachedDefaultBranch) return cachedDefaultBranch;
+    function getProjectConfig(channelId) {
+        const channelConfig = channelStore.loadChannelConfig();
+        const entry = channelId && channelConfig[channelId];
+        if (entry && entry.projectDir && entry.projectName) {
+            return { projectName: entry.projectName, projectDir: entry.projectDir };
+        }
+        return null;
+    }
+
+    function requireProject(channelId) {
+        const project = getProjectConfig(channelId);
+        if (!project) {
+            throw new Error('No project set for this channel. Run `!project -name <name> -path <path>` first.');
+        }
+        return project;
+    }
+
+    function worktreesBaseFor(channelId) {
+        const { projectName } = requireProject(channelId);
+        return path.join(config.WORKTREES_ROOT, projectName);
+    }
+
+    function getDefaultBranch(projectDir) {
+        if (defaultBranchByProject.has(projectDir)) return defaultBranchByProject.get(projectDir);
+        let branch;
         try {
-            const ref = execSync('git symbolic-ref refs/remotes/origin/HEAD', { cwd: config.PROJECT_DIR, encoding: 'utf8' }).trim();
-            cachedDefaultBranch = ref.replace('refs/remotes/origin/', '');
-            return cachedDefaultBranch;
+            const ref = execSync('git symbolic-ref refs/remotes/origin/HEAD', { cwd: projectDir, encoding: 'utf8' }).trim();
+            branch = ref.replace('refs/remotes/origin/', '');
         } catch {
             try {
-                execSync('git rev-parse --verify main', { cwd: config.PROJECT_DIR, stdio: 'ignore' });
-                cachedDefaultBranch = 'main';
+                execSync('git rev-parse --verify main', { cwd: projectDir, stdio: 'ignore' });
+                branch = 'main';
             } catch {
-                cachedDefaultBranch = 'master';
+                branch = 'master';
             }
-            return cachedDefaultBranch;
         }
+        defaultBranchByProject.set(projectDir, branch);
+        return branch;
     }
 
     function getBaseBranch(channelId) {
         const channelConfig = channelStore.loadChannelConfig();
-        return (channelConfig[channelId] && channelConfig[channelId].baseBranch) || getDefaultBranch();
+        if (channelConfig[channelId] && channelConfig[channelId].baseBranch) {
+            return channelConfig[channelId].baseBranch;
+        }
+        const { projectDir } = requireProject(channelId);
+        return getDefaultBranch(projectDir);
     }
 
     function sanitizeChannelName(name) {
@@ -37,11 +64,11 @@ function createWorktreeService({ config, channelStore }) {
         return config.BRANCH_PREFIX ? `${config.BRANCH_PREFIX}/${sanitizedChannel}` : sanitizedChannel;
     }
 
-    function getWorktreeInfo(channelName) {
+    function getWorktreeInfo(channelName, channelId) {
         const sanitized = sanitizeChannelName(channelName);
         return {
             sanitized,
-            worktreePath: path.join(config.WORKTREES_BASE, sanitized),
+            worktreePath: path.join(worktreesBaseFor(channelId), sanitized),
             branch: branchName(sanitized),
         };
     }
@@ -71,15 +98,16 @@ function createWorktreeService({ config, channelStore }) {
         }
     }
 
-    function createWorktree(worktreePath, branch, baseBranch) {
+    function createWorktree(worktreePath, branch, baseBranch, projectDir) {
         try {
-            if (!fs.existsSync(config.WORKTREES_BASE)) fs.mkdirSync(config.WORKTREES_BASE, { recursive: true });
+            const worktreesBase = path.dirname(worktreePath);
+            if (!fs.existsSync(worktreesBase)) fs.mkdirSync(worktreesBase, { recursive: true });
 
             try {
-                execSync(`git worktree add -b "${branch}" "${worktreePath}" "${baseBranch}"`, { cwd: config.PROJECT_DIR, encoding: 'utf8', stdio: 'pipe' });
+                execSync(`git worktree add -b "${branch}" "${worktreePath}" "${baseBranch}"`, { cwd: projectDir, encoding: 'utf8', stdio: 'pipe' });
             } catch (e) {
                 if (e.stderr && e.stderr.includes('already exists')) {
-                    execSync(`git worktree add "${worktreePath}" "${branch}"`, { cwd: config.PROJECT_DIR, encoding: 'utf8', stdio: 'pipe' });
+                    execSync(`git worktree add "${worktreePath}" "${branch}"`, { cwd: projectDir, encoding: 'utf8', stdio: 'pipe' });
                 } else {
                     throw e;
                 }
@@ -91,13 +119,14 @@ function createWorktreeService({ config, channelStore }) {
             console.log(`[DEBUG] Created worktree: ${worktreePath} (branch: ${branch}, base: ${baseBranch})`);
             return worktreePath;
         } catch (e) {
-            console.error(`[DEBUG] Failed to create worktree, falling back to PROJECT_DIR:`, e.message);
-            return config.PROJECT_DIR;
+            console.error(`[DEBUG] Failed to create worktree, falling back to project dir:`, e.message);
+            return projectDir;
         }
     }
 
-    function ensureWorktree(channelName, baseBranch) {
-        const { worktreePath, branch } = getWorktreeInfo(channelName);
+    function ensureWorktree(channelName, baseBranch, channelId) {
+        const { projectDir } = requireProject(channelId);
+        const { worktreePath, branch } = getWorktreeInfo(channelName, channelId);
 
         if (fs.existsSync(worktreePath)) {
             try {
@@ -105,7 +134,7 @@ function createWorktreeService({ config, channelStore }) {
             } catch {
                 console.log(`[DEBUG] Worktree directory exists but is not a valid git worktree. Removing and recreating.`);
                 fs.rmSync(worktreePath, { recursive: true, force: true });
-                return createWorktree(worktreePath, branch, baseBranch);
+                return createWorktree(worktreePath, branch, baseBranch, projectDir);
             }
 
             const markerPath = path.join(worktreePath, '.shadow-cube-base');
@@ -127,7 +156,7 @@ function createWorktreeService({ config, channelStore }) {
             return worktreePath;
         }
 
-        return createWorktree(worktreePath, branch, baseBranch);
+        return createWorktree(worktreePath, branch, baseBranch, projectDir);
     }
 
     function rebaseWorktreeOnto(worktreePath, branch) {
@@ -136,8 +165,8 @@ function createWorktreeService({ config, channelStore }) {
         fs.writeFileSync(path.join(worktreePath, '.shadow-cube-base'), branch);
     }
 
-    function rebaseExistingWorktree(channelName, branch) {
-        const { sanitized, worktreePath } = getWorktreeInfo(channelName);
+    function rebaseExistingWorktree(channelName, branch, channelId) {
+        const { sanitized, worktreePath } = getWorktreeInfo(channelName, channelId);
         if (!fs.existsSync(worktreePath)) return '';
 
         try {
@@ -151,11 +180,12 @@ function createWorktreeService({ config, channelStore }) {
         }
     }
 
-    function removeWorktree(channelName) {
-        const { worktreePath, branch } = getWorktreeInfo(channelName);
+    function removeWorktree(channelName, channelId) {
+        const { projectDir } = requireProject(channelId);
+        const { worktreePath, branch } = getWorktreeInfo(channelName, channelId);
 
         try {
-            execSync(`git worktree remove "${worktreePath}" --force`, { cwd: config.PROJECT_DIR, stdio: 'pipe' });
+            execSync(`git worktree remove "${worktreePath}" --force`, { cwd: projectDir, stdio: 'pipe' });
             console.log(`[DEBUG] Removed worktree: ${worktreePath}`);
         } catch (e) {
             console.error(`[DEBUG] Failed to remove worktree:`, e.message);
@@ -163,20 +193,21 @@ function createWorktreeService({ config, channelStore }) {
         }
 
         try {
-            execSync(`git branch -d "${branch}"`, { cwd: config.PROJECT_DIR, stdio: 'pipe' });
+            execSync(`git branch -d "${branch}"`, { cwd: projectDir, stdio: 'pipe' });
         } catch { }
 
         return true;
     }
 
-    function listActiveWorktrees() {
-        const output = execSync('git worktree list', { cwd: config.PROJECT_DIR, encoding: 'utf8' });
+    function listActiveWorktrees(channelId) {
+        const { projectDir } = requireProject(channelId);
+        const output = execSync('git worktree list', { cwd: projectDir, encoding: 'utf8' });
         const lines = output.trim().split('\n');
         return config.BRANCH_PREFIX ? lines.filter(l => l.includes(`${config.BRANCH_PREFIX}/`)) : lines.filter(l => l !== lines[0]);
     }
 
-    function deployWorktree(channelName, userMsg) {
-        const { worktreePath, branch } = getWorktreeInfo(channelName);
+    function deployWorktree(channelName, userMsg, channelId) {
+        const { worktreePath, branch } = getWorktreeInfo(channelName, channelId);
         if (!fs.existsSync(worktreePath)) return { missing: true, branch };
 
         const status = execSync('git status --porcelain', { cwd: worktreePath, encoding: 'utf8' }).trim();
@@ -196,17 +227,18 @@ function createWorktreeService({ config, channelStore }) {
         };
     }
 
-    function pushWorktree(channelName) {
-        const { worktreePath, branch } = getWorktreeInfo(channelName);
+    function pushWorktree(channelName, channelId) {
+        const { worktreePath, branch } = getWorktreeInfo(channelName, channelId);
         if (!fs.existsSync(worktreePath)) return { missing: true, branch };
 
         execSync(`git push -u origin ${branch}`, { cwd: worktreePath, encoding: 'utf8', stdio: 'pipe' });
         return { branch };
     }
 
-    function fetchRemoteBranch(branch) {
+    function fetchRemoteBranch(branch, channelId) {
         try {
-            execSync(`git fetch origin ${branch}`, { cwd: config.PROJECT_DIR, stdio: 'pipe' });
+            const { projectDir } = requireProject(channelId);
+            execSync(`git fetch origin ${branch}`, { cwd: projectDir, stdio: 'pipe' });
             return true;
         } catch {
             return false;
@@ -214,6 +246,7 @@ function createWorktreeService({ config, channelStore }) {
     }
 
     return {
+        getProjectConfig,
         getDefaultBranch,
         getBaseBranch,
         sanitizeChannelName,

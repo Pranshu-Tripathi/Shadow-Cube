@@ -11,7 +11,7 @@ const SESSIONS_DIR = path.join(ROOT_DIR, 'sessions');
 const SESSIONS_CONFIG_PATH = path.join(SESSIONS_DIR, 'config.json');
 const CONFIG_DIR = path.join(ROOT_DIR, 'config');
 const CHANNEL_CONFIG_PATH = path.join(CONFIG_DIR, 'channels.json');
-const WORKTREES_BASE = process.env.WORKTREES_DIR || path.join(PROJECT_DIR, '..', '.shadow-cube-worktrees');
+const WORKTREES_ROOT = process.env.WORKTREES_DIR || '/Users/tripathi/Desktop/development/code/worktrees';
 
 function ensureDir(dir) {
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -41,5 +41,5 @@ module.exports = {
     SESSIONS_CONFIG_PATH,
     CONFIG_DIR,
     CHANNEL_CONFIG_PATH,
-    WORKTREES_BASE,
+    WORKTREES_ROOT,
 };
