@@ -78,7 +78,7 @@ function createBot() {
         console.log('--------------------------------------------------');
         console.log(`[DEBUG] SHADOW CUBE V4.0 (PROVIDERS: CLAUDE, CODEx) + MEMORY ENABLED`);
         console.log(`[DEBUG] PROJECT_DIR: ${config.PROJECT_DIR}`);
-        console.log(`[DEBUG] WORKTREES_BASE: ${config.WORKTREES_BASE}`);
+        console.log(`[DEBUG] WORKTREES_ROOT: ${config.WORKTREES_ROOT}`);
         console.log('--------------------------------------------------');
     });
 

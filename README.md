@@ -45,14 +45,14 @@ A Discord bot that bridges Claude Code CLI to Discord. Send prompts in a channel
 4. Fill in the `.env` values:
    ```
    DISCORD_TOKEN=your_discord_bot_token_here
-   PROJECT_DIR=/absolute/path/to/your/project
    # WORKTREES_DIR=/optional/custom/path/for/worktrees
    ```
    - `DISCORD_TOKEN` - Your Discord bot token
-   - `PROJECT_DIR` - The directory Claude Code will operate in (must be a git repository)
-   - `WORKTREES_DIR` *(optional)* - Custom location for git worktrees (default: `PROJECT_DIR/../.shadow-cube-worktrees`)
+   - `WORKTREES_DIR` *(optional)* - Root directory that holds all worktrees (default: `/Users/tripathi/Desktop/development/code/worktrees`). Each project gets a subfolder: `WORKTREES_DIR/<project-name>/<channel-name>`.
    - `BRANCH_PREFIX` *(optional)* - Prefix for worktree branch names (default: `shadow-cube`). Set to empty string for no prefix.
    - `GITHUB_PAT` *(optional)* - GitHub personal access token used by `!repo` to read prompts/skills (required for private repos)
+
+   Which repository a channel works on is **not** set here — each channel points itself at a project at runtime with **`!project -name <name> -path <path>`** (see [Projects](#projects-per-channel) below).
 
 5. Run the bot:
    ```bash
@@ -61,6 +61,7 @@ A Discord bot that bridges Claude Code CLI to Discord. Send prompts in a channel
 
 ## Usage
 
+- **`!project -name <name> -path <path>`** to point the channel at a git repository (required before the bot will do any work — see below)
 - **Send a message** mentioning the bot in any channel - it creates a thread and streams Claude's response
 - **Reply in thread** to continue the conversation in the same Claude session
 - **`!clear`** in a thread to reset the session and kill any running process
@@ -71,6 +72,16 @@ A Discord bot that bridges Claude Code CLI to Discord. Send prompts in a channel
 - **`!repo`** to pull a system prompt and skills from a configured GitHub repo (see below)
 - **`!memory`** to teach the channel a lasting lesson that's layered onto its system prompt (see below)
 - **`!provider claude|codex`** to choose which agent backs the channel (see below)
+
+## Projects (per-channel)
+
+Each channel chooses which git repository it operates on. **A channel must be pointed at a project before the bot will run an agent or touch worktrees** — otherwise it replies asking you to configure one.
+
+- **`!project -name <name> -path <path>`** - point this channel at a git repo. `<path>` may use `~` and is validated as a git repository before being saved. `<name>` becomes the project's folder under the worktrees root.
+- **`!project`** or **`!project -view`** - show the channel's configured project
+- **`!project -clear`** - clear the project for this channel
+
+The setting is per-channel and persists across restarts (stored in `config/channels.json`). A channel's worktree is created at **`<WORKTREES_DIR>/<name>/<channel-name>`**, so multiple channels can share one project and different projects stay isolated. Two channels can also target completely different repositories.
 
 ## Providers (Claude / Codex)
 
@@ -113,12 +124,12 @@ Memory is local to the worktree (and removed with `!clear --worktree`/`!destroy`
 
 ## Git Worktrees
 
-Each Discord channel automatically gets its own [git worktree](https://git-scm.com/docs/git-worktree), allowing parallel work on different tickets without file conflicts. Worktrees are created on first message and branch off the channel's configured base branch (or the repo default).
+Each Discord channel automatically gets its own [git worktree](https://git-scm.com/docs/git-worktree), allowing parallel work on different tickets without file conflicts. Worktrees are created on first message (after the channel is pointed at a project with `!project`) and branch off the channel's configured base branch (or the repo default).
 
 - Branch naming: `<BRANCH_PREFIX>/<channel-name>` (default prefix: `shadow-cube`)
-- Worktree location: `WORKTREES_DIR` or `PROJECT_DIR/../.shadow-cube-worktrees/<channel-name>`
+- Worktree location: `<WORKTREES_DIR>/<project-name>/<channel-name>` — one folder per project under the shared worktrees root
+- Set the channel's project: `!project -name <name> -path <path>` (required)
 - Set base branch per channel: `!base feature/my-branch`
-- If worktree creation fails, the bot falls back to `PROJECT_DIR`
 - Each worktree is scaffolded with an `.out/` directory on creation; bot artifacts (`.out/`, `.skills/`, `.claude/`, `.shadow-cube-base`) are added to the worktree's local git exclude so they never appear in the target repo's `git status`
 
 ## How It Works
