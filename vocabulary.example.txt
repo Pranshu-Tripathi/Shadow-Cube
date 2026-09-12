@@ -1,0 +1,40 @@
+# Terms that Whisper tends to mis-spell, one per line. `#` starts a comment.
+# Re-read on every transcription, so edits take effect without restarting the bot.
+# The channel name and the channel's project name are appended automatically.
+
+# Tooling
+worktree
+worktrees
+Claude
+Codex
+Shadow Cube
+Bun
+bunx
+ollama
+whisper
+Discord
+stdin
+Tilt
+kubectl
+namespace
+
+# Git / GitHub
+staging
+rebase
+PR
+repo
+monorepo
+commit
+branch
+merge conflict
+cherry-pick
+
+# Code shapes people say out loud
+TypeScript
+JavaScript
+Python
+JSON
+YAML
+API
+CLI
+env var

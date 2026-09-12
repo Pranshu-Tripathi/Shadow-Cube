@@ -10,12 +10,14 @@ A Discord bot that bridges Claude Code CLI to Discord. Send prompts in a channel
 - Session persistence across messages in the same thread
 - Code block auto-detection and syntax highlighting for Discord
 - **Git worktree support** - each Discord channel gets its own worktree, enabling parallel work on different tickets without file conflicts
+- **Voice messages** - record a Discord voice note, get it transcribed locally and confirm it before it reaches the agent
 
 ## Prerequisites
 
 - [Bun](https://bun.sh) runtime
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated (`claude` available in PATH)
 - *(optional)* [Codex CLI](https://developers.openai.com/codex) installed and authenticated (`codex` in PATH) — only needed for channels using `!provider codex`
+- *(optional)* `ffmpeg` + `whisper-cpp` + a ggml model — only needed for [voice messages](#voice-messages); run `bun run setup:voice` to install them
 - A [Discord bot token](https://discord.com/developers/applications) with the following permissions:
   - Send Messages
   - Send Messages in Threads
@@ -63,6 +65,7 @@ A Discord bot that bridges Claude Code CLI to Discord. Send prompts in a channel
 
 - **`!project -name <name> -path <path>`** to point the channel at a git repository (required before the bot will do any work — see below)
 - **Send a message** mentioning the bot in any channel - it creates a thread and streams Claude's response
+- **Send a voice message** - it's transcribed locally and shown for confirmation before it reaches the agent (see below)
 - **Reply in thread** to continue the conversation in the same Claude session
 - **`!clear`** in a thread to reset the session and kill any running process
 - **`!deploy`** or **`!deploy <message>`** to commit all changes in the channel's worktree branch
@@ -122,6 +125,54 @@ Skills are stored under `.skills/` (provider-neutral) and mirrored to `.claude/s
 
 Memory is local to the worktree (and removed with `!clear --worktree`/`!destroy`); use `!memory -remote` to persist lessons to the repo so they survive and can be shared.
 
+## Voice Messages
+
+Record a Discord voice message (or upload any audio file) in a configured channel and the bot transcribes it **entirely on-device** — no audio ever leaves the machine and there is no per-minute cost.
+
+Run the one-time setup first:
+
+```bash
+bun run setup:voice
+```
+
+That installs `ffmpeg` and `whisper-cpp` via Homebrew, downloads the `large-v3-turbo` ggml model to `~/.cache/whisper.cpp/`, and pulls the `gemma3:1b` ollama model used for proof-reading. On an M4 Pro the whole pipeline runs in **~1.7s for a 30-second clip**.
+
+**The flow:**
+
+1. You send a voice note; the bot reacts 🎙️
+2. `ffmpeg` converts the ogg/opus to 16kHz mono wav, then `whisper-cli` transcribes it
+3. A small local LLM proof-reads the transcript (fixes "work tree" → `worktree`, "get hub" → `GitHub`, strips "um"/"you know")
+4. The transcript is posted in a code block with a live countdown and **Send now / Edit / Cancel** buttons
+5. After **15 seconds** it auto-sends to the agent — unless you edited or cancelled it
+
+**Edit** opens a modal pre-filled with the transcript, so fixing one word doesn't mean retyping the sentence. Opening it pauses the countdown. Submitting the modal sends immediately — editing is itself a confirmation.
+
+Approved transcripts go **straight to the agent and never run `!commands`** — a misheard `!destroy` isn't a risk worth taking. Everything downstream behaves exactly like typed text, so a voice note in a thread with a live agent is piped to its stdin, and can even answer an `AskUserQuestion` prompt.
+
+### Teaching it your vocabulary
+
+Whisper mangles project jargon. The bot seeds it with a glossary (used both as whisper's initial prompt and in the cleanup pass), assembled from:
+
+- **`config/vocabulary.txt`** — one term per line, `#` for comments. Seeded from `vocabulary.example.txt` on first run, then it's yours to edit. It's **re-read on every transcription**, so changes take effect without restarting the bot.
+- the channel's name and its configured project name, added automatically
+
+### Tuning
+
+All optional, via `.env`:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `VOICE_AUTO_SEND_MS` | `15000` | How long the confirm card waits before auto-sending |
+| `VOICE_CLEANUP_MODEL` | `gemma3:1b` | ollama model for proof-reading. **Empty string disables it** |
+| `VOICE_CLEANUP_KEEP_ALIVE` | `30m` | How long ollama keeps the model resident |
+| `WHISPER_MODEL` | `~/.cache/whisper.cpp/ggml-large-v3-turbo-q5_0.bin` | Path to the ggml model |
+| `WHISPER_LANGUAGE` | `en` | Spoken language (`auto` to detect) |
+| `VOICE_MAX_DURATION_SEC` / `VOICE_MAX_BYTES` | `600` / 25MB | Clip limits |
+
+The cleanup pass is strictly best-effort: if ollama is down, slow, or returns something wildly longer or shorter than the input, the raw whisper transcript is used instead. Whisper's silence hallucinations (`[BLANK_AUDIO]`, "Thank you.", subtitle credits) are filtered out rather than sent to the agent.
+
+> **Note:** whisper and the cleanup model share the GPU. Keeping several large ollama models resident will slow transcription down noticeably — `ollama ps` to check, `ollama stop <model>` to free them.
+
 ## Git Worktrees
 
 Each Discord channel automatically gets its own [git worktree](https://git-scm.com/docs/git-worktree), allowing parallel work on different tickets without file conflicts. Worktrees are created on first message (after the channel is pointed at a project with `!project`) and branch off the channel's configured base branch (or the repo default).
@@ -135,5 +186,7 @@ Each Discord channel automatically gets its own [git worktree](https://git-scm.c
 ## How It Works
 
 The bot spawns `claude -p` with `--output-format stream-json` for each query, parsing the JSONL stream to separate thinking blocks, text content, and tool use into distinct Discord messages. Sessions are persisted per-thread so follow-up messages resume the same Claude conversation.
+
+Voice messages are intercepted in `src/commands/registry.js` before the command loop and handled by `src/voice/` — `audio.js` (detection, download, ffmpeg), `transcriber.js` (whisper.cpp), `vocabulary.js` (glossary), `cleanup.js` (ollama proof-read) and `voiceFlow.js` (the confirm card, countdown and edit modal). Transcription is serialised through a queue so two clips can't contend for the GPU.
 
 For channels set to `!provider codex`, the bot instead drives a long-lived `codex app-server` process over its NDJSON JSON-RPC protocol (`initialize` → `thread/start`/`thread/resume` → `turn/start`), routing the streamed `item/*` and `turn/*` notifications to Discord and turning `requestApproval` server-requests into Discord approval buttons. Codex lives under `src/providers/codex/`, kept separate from the Claude engine under `src/providers/claude/`.

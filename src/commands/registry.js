@@ -10,6 +10,7 @@ const memoryCommand = require('./memoryCommand');
 const clearCommand = require('./clearCommand');
 const destroyCommand = require('./destroyCommand');
 const agentMessageHandler = require('./agentMessageHandler');
+const { createVoice } = require('../voice');
 
 function createCommandRegistry(context) {
     const commands = [
@@ -26,8 +27,26 @@ function createCommandRegistry(context) {
         destroyCommand,
     ];
 
+    // Approved transcripts skip the command loop on purpose — a misheard `!destroy`
+    // is not a risk worth taking. Voice reaches the agent, never the commands.
+    function dispatchTranscript(message, transcript) {
+        return agentMessageHandler.execute({ message, cleanPrompt: transcript, context });
+    }
+
+    const voice = createVoice({
+        config: context.config,
+        channelHelpers: context.channelHelpers,
+        worktrees: context.worktrees,
+        formatting: context.formatting,
+        dispatch: dispatchTranscript,
+    });
+
     async function handleMessage(message) {
         if (message.author.bot) return;
+
+        if (voice.isAudioMessage(message)) {
+            return voice.handle(message);
+        }
 
         const cleanPrompt = context.formatting.stripDiscordTags(message.content);
         for (const command of commands) {
@@ -42,6 +61,7 @@ function createCommandRegistry(context) {
 
     return {
         handleMessage,
+        voice,
     };
 }
 
