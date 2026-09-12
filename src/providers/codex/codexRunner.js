@@ -6,7 +6,7 @@ function createCodexRunner({ state, appServer, renderer, sessionStore }) {
         const channelName = deps.getParentChannelName(targetChannel);
         const channelId = deps.getParentChannelId(targetChannel);
         const baseBranch = deps.getBaseBranch(channelId);
-        const activeCwd = deps.ensureWorktree(channelName, baseBranch);
+        const activeCwd = deps.ensureWorktree(channelName, baseBranch, channelId);
 
         let systemPrompt = `The base branch for this worktree is \`${baseBranch}\`. Use \`${baseBranch}\` as the target for PRs, diffs, and comparisons — not \`main\` or \`master\` unless they match.`;
         const channelRule = deps.loadChannelConfig()[channelId]?.systemPrompt;

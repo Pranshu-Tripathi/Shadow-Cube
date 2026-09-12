@@ -13,8 +13,8 @@ async function execute({ message, match: commandMatch, context }) {
     context.channelStore.updateChannel(channelId, { baseBranch: branch });
 
     let rebaseMsg = '';
-    if (oldBase && oldBase !== branch) {
-        rebaseMsg = context.worktrees.rebaseExistingWorktree(channelName, branch);
+    if (oldBase && oldBase !== branch && context.worktrees.getProjectConfig(channelId)) {
+        rebaseMsg = context.worktrees.rebaseExistingWorktree(channelName, branch, channelId);
     }
 
     return message.reply(`**Base branch set to \`${branch}\` for this channel.**${rebaseMsg}`);

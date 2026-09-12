@@ -5,6 +5,7 @@ const deployCommand = require('./deployCommand');
 const pushCommand = require('./pushCommand');
 const ruleCommand = require('./ruleCommand');
 const repoCommand = require('./repoCommand');
+const projectCommand = require('./projectCommand');
 const memoryCommand = require('./memoryCommand');
 const clearCommand = require('./clearCommand');
 const destroyCommand = require('./destroyCommand');
@@ -19,6 +20,7 @@ function createCommandRegistry(context) {
         pushCommand,
         ruleCommand,
         repoCommand,
+        projectCommand,
         memoryCommand,
         clearCommand,
         destroyCommand,

@@ -17,7 +17,7 @@ function createRulesRepoService({ github, channelStore, worktrees, memory }) {
 
         if (wantSkill) {
             const baseBranch = worktrees.getBaseBranch(channelId);
-            const worktreePath = worktrees.ensureWorktree(channelName, baseBranch);
+            const worktreePath = worktrees.ensureWorktree(channelName, baseBranch, channelId);
             const skillsPrefix = relPath ? `${relPath}/skills/` : 'skills/';
             const tree = await github.listTree(repo, ref);
             const blobs = tree.filter(e => e.type === 'blob' && e.path.startsWith(skillsPrefix));
@@ -49,7 +49,7 @@ function createRulesRepoService({ github, channelStore, worktrees, memory }) {
 
     async function promoteMemory({ channelId, channelName, repo }) {
         const sanitized = worktrees.sanitizeChannelName(channelName);
-        const worktreePath = worktrees.ensureWorktree(channelName, worktrees.getBaseBranch(channelId));
+        const worktreePath = worktrees.ensureWorktree(channelName, worktrees.getBaseBranch(channelId), channelId);
         const files = memory.listMemoryFiles(worktreePath);
         const relPath = channelStore.loadChannelConfig()[channelId]?.rulesPath || '';
         const memBase = relPath ? `${relPath}/memory` : 'memory';

@@ -19,8 +19,13 @@ async function execute({ message, match: commandMatch, context }) {
     let extra = '';
     if (commandMatch.withWorktree) {
         const channelName = context.channelHelpers.getParentChannelName(message.channel);
-        const removed = context.worktrees.removeWorktree(channelName);
-        extra = removed ? ' Worktree removed.' : ' Failed to remove worktree.';
+        const channelId = context.channelHelpers.getParentChannelId(message.channel);
+        if (context.worktrees.getProjectConfig(channelId)) {
+            const removed = context.worktrees.removeWorktree(channelName, channelId);
+            extra = removed ? ' Worktree removed.' : ' Failed to remove worktree.';
+        } else {
+            extra = ' No project set, so no worktree to remove.';
+        }
     }
 
     return message.reply(`**Session cleared & process killed.${extra}** Next message will start fresh.`);

@@ -3,8 +3,14 @@ function match(cleanPrompt) {
 }
 
 async function execute({ message, context }) {
+    const channelId = context.channelHelpers.getParentChannelId(message.channel);
+
+    if (!context.worktrees.getProjectConfig(channelId)) {
+        return message.reply('**No project set for this channel.** Run `!project -name <name> -path <path>` first.');
+    }
+
     try {
-        const worktreeLines = context.worktrees.listActiveWorktrees();
+        const worktreeLines = context.worktrees.listActiveWorktrees(channelId);
         if (worktreeLines.length === 0) {
             return message.reply('**No active worktrees.**');
         }

@@ -18,8 +18,13 @@ async function execute({ message, match: commandMatch, context }) {
     const channelId = context.channelHelpers.getParentChannelId(message.channel);
     const threadId = message.channel.isThread() ? message.channel.id : null;
 
+    const needsWorktree = ['view', 'wipe', 'remote', 'add'].includes(commandMatch.kind);
+    if (needsWorktree && !context.worktrees.getProjectConfig(channelId)) {
+        return message.reply('**No project set for this channel.** Run `!project -name <name> -path <path>` first.');
+    }
+
     if (commandMatch.kind === 'view') {
-        const worktreePath = context.worktrees.ensureWorktree(channelName, context.worktrees.getBaseBranch(channelId));
+        const worktreePath = context.worktrees.ensureWorktree(channelName, context.worktrees.getBaseBranch(channelId), channelId);
         const files = context.memory.listMemoryFiles(worktreePath);
         if (!files.length) {
             return message.reply('**No memory for this channel.** Use `!memory <note>` to add one.');
@@ -31,7 +36,7 @@ async function execute({ message, match: commandMatch, context }) {
     }
 
     if (commandMatch.kind === 'wipe') {
-        const worktreePath = context.worktrees.ensureWorktree(channelName, context.worktrees.getBaseBranch(channelId));
+        const worktreePath = context.worktrees.ensureWorktree(channelName, context.worktrees.getBaseBranch(channelId), channelId);
         context.memory.wipeMemory(worktreePath);
         return message.reply('**Memory cleared for this channel.**');
     }
@@ -46,7 +51,7 @@ async function execute({ message, match: commandMatch, context }) {
             return message.reply('**`GITHUB_PAT` is not set.** A write-scoped token (`Contents: RW` + `Pull requests: RW`) is required to open PRs.');
         }
 
-        const worktreePath = context.worktrees.ensureWorktree(channelName, context.worktrees.getBaseBranch(channelId));
+        const worktreePath = context.worktrees.ensureWorktree(channelName, context.worktrees.getBaseBranch(channelId), channelId);
         const files = context.memory.listMemoryFiles(worktreePath);
         if (!files.length) {
             return message.reply('**No local memory to promote.** Add some with `!memory <note>` first.');
@@ -85,7 +90,7 @@ async function execute({ message, match: commandMatch, context }) {
     }
 
     if (commandMatch.kind === 'add') {
-        const worktreePath = context.worktrees.ensureWorktree(channelName, context.worktrees.getBaseBranch(channelId));
+        const worktreePath = context.worktrees.ensureWorktree(channelName, context.worktrees.getBaseBranch(channelId), channelId);
         const name = context.memory.writeMemoryFile(worktreePath, commandMatch.note);
         return message.reply(`**Memory saved** (\`${name}\`). It will apply from the next message. Use \`!memory -remote\` to open a PR promoting it to the repo.`);
     }
