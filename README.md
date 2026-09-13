@@ -142,8 +142,8 @@ That installs `ffmpeg` and `whisper-cpp` via Homebrew, downloads the `large-v3-t
 1. You send a voice note; the bot reacts 🎙️
 2. `ffmpeg` converts the ogg/opus to 16kHz mono wav, then `whisper-cli` transcribes it
 3. A small local LLM proof-reads the transcript (fixes "work tree" → `worktree`, "get hub" → `GitHub`, strips "um"/"you know")
-4. The transcript is posted in a code block with a live countdown and **Send now / Edit / Cancel** buttons
-5. After **15 seconds** it auto-sends to the agent — unless you edited or cancelled it
+4. A thread is opened off the voice message, named after the transcript, and the transcript is posted **inside it** in a code block with a live countdown and **Send now / Edit / Cancel** buttons — so the parent channel stays clean
+5. After **15 seconds** it auto-sends to the agent, in that same thread — unless you edited or cancelled it
 
 **Edit** opens a modal pre-filled with the transcript, so fixing one word doesn't mean retyping the sentence. Opening it pauses the countdown. Submitting the modal sends immediately — editing is itself a confirmation.
 

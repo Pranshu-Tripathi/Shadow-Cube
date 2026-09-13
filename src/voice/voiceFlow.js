@@ -120,7 +120,7 @@ function createVoiceFlow({
         entry.resolved = true;
         await finish(entry, { note: '✅ Sent to the agent.', keepText: true });
         try {
-            await dispatch(entry.message, entry.text);
+            await dispatch(entry.message, entry.text, entry.thread);
         } catch (e) {
             console.error('[DEBUG] failed to dispatch voice transcript:', e.message);
             await entry.card.channel.send('⚠️ Failed to hand the transcript to the agent.').catch(() => {});
@@ -163,6 +163,26 @@ function createVoiceFlow({
             return result;
         } finally {
             audioOps.cleanupTempDir(tmpDir);
+        }
+    }
+
+    // The confirmation card belongs in the thread, not the parent channel — otherwise
+    // every voice note leaves a transcript card cluttering the channel. Naming the
+    // thread needs the transcript, so this runs after transcription rather than before.
+    function threadName(transcript) {
+        return transcript.replace(/\s+/g, ' ').trim().substring(0, 50) || 'Voice message';
+    }
+
+    async function ensureThread(message, transcript) {
+        if (message.channel.isThread() || !message.guild) return message.channel;
+        try {
+            return await message.startThread({
+                name: threadName(transcript),
+                autoArchiveDuration: 60,
+            });
+        } catch (e) {
+            console.error('[DEBUG] Failed to create thread for voice message, using channel:', e.message);
+            return message.channel;
         }
     }
 
@@ -211,7 +231,8 @@ function createVoiceFlow({
         };
 
         try {
-            entry.card = await message.reply({
+            entry.thread = await ensureThread(message, entry.text);
+            entry.card = await entry.thread.send({
                 content: renderCard(entry),
                 components: buildRows(token, { editable: isEditable(entry) }),
             });

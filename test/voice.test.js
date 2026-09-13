@@ -14,22 +14,19 @@ function collection(items) {
     return map;
 }
 
-function fakeMessage({ attachments = [], flags = 0, content = '' } = {}) {
-    return {
-        content,
-        flags: { bitfield: flags },
-        attachments: collection(attachments),
-        reactions: [],
-        replies: [],
-        channel: { id: 'chan', name: 'shadow-cube-dev', isThread: () => false },
-        async react(emoji) { this.reactions.push(emoji); },
-        async reply(payload) {
-            this.replies.push(payload);
+function fakeChannel({ id = 'chan', name = 'shadow-cube-dev', thread = false } = {}) {
+    const channel = {
+        id,
+        name,
+        sent: [],
+        isThread: () => thread,
+        async send(payload) {
+            channel.sent.push(payload);
             const card = {
                 content: payload.content ?? payload,
                 components: payload.components,
                 edits: [],
-                channel: { send: async () => {} },
+                channel,
                 async edit(next) {
                     this.content = next.content;
                     this.components = next.components;
@@ -37,8 +34,33 @@ function fakeMessage({ attachments = [], flags = 0, content = '' } = {}) {
                     return this;
                 },
             };
-            this.card = card;
+            channel.card = card;
             return card;
+        },
+    };
+    return channel;
+}
+
+function fakeMessage({ attachments = [], flags = 0, content = '', inThread = false, guild = {}, threadFails = false } = {}) {
+    const channel = fakeChannel({ thread: inThread });
+    return {
+        content,
+        guild,
+        flags: { bitfield: flags },
+        attachments: collection(attachments),
+        reactions: [],
+        replies: [],
+        channel,
+        thread: null,
+        async react(emoji) { this.reactions.push(emoji); },
+        async startThread({ name }) {
+            if (threadFails) throw new Error('Missing Permissions');
+            this.thread = fakeChannel({ id: 'thread-1', name, thread: true });
+            return this.thread;
+        },
+        async reply(payload) {
+            this.replies.push(payload);
+            return channel.send(payload);
         },
     };
 }
@@ -142,11 +164,18 @@ describe('cleanup output sanitising', () => {
     });
 });
 
+// The confirmation card is posted into the thread when one is opened, and into the
+// channel otherwise (DMs, or a voice note sent inside an existing thread).
+function cardOf(message) {
+    return (message.thread && message.thread.card) || message.channel.card;
+}
+
 describe('voice flow', () => {
     const NEVER = 60_000;
 
     function harness({ transcript = 'run the tests', autoSendMs = NEVER, cleaned = false, downloadFails = false } = {}) {
         const dispatched = [];
+        const threads = [];
         const flow = createVoiceFlow({
             config: {
                 FFMPEG_BIN: 'ffmpeg',
@@ -161,7 +190,7 @@ describe('voice flow', () => {
             transcriber: { checkAvailability: () => [], transcribe: async () => transcript },
             vocabulary: { buildTerms: () => [], buildWhisperPrompt: () => '' },
             cleanup: { enabled: cleaned, model: 'gemma3:1b', warm: async () => {}, clean: async (t) => ({ text: t, cleaned }) },
-            dispatch: async (message, text) => { dispatched.push(text); },
+            dispatch: async (message, text, thread) => { dispatched.push(text); threads.push(thread); },
             audioOps: {
                 ...audio,
                 createTempDir: () => '/tmp/fake-voice',
@@ -172,7 +201,7 @@ describe('voice flow', () => {
                 toWav: async () => '/tmp/fake-voice/input.wav',
             },
         });
-        return { flow, dispatched };
+        return { flow, dispatched, threads };
     }
 
     function voiceMsg(extra = {}) {
@@ -189,15 +218,73 @@ describe('voice flow', () => {
 
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+    test('posts the card inside a new thread, leaving the channel clean', async () => {
+        const { flow, threads } = harness({ autoSendMs: 40 });
+        const message = voiceMsg();
+        await flow.handle(message);
+
+        expect(message.thread).not.toBeNull();
+        expect(message.thread.sent).toHaveLength(1);   // the card went here...
+        expect(message.channel.sent).toHaveLength(0);  // ...and nothing to the channel
+        expect(message.replies).toHaveLength(0);
+
+        await sleep(120);
+        expect(threads[0]).toBe(message.thread); // handed to the agent so it doesn't open a second one
+    });
+
+    test('names the thread after the transcript, collapsing newlines', async () => {
+        const { flow } = harness({ transcript: 'fix the\n\nsession store tests' });
+        const message = voiceMsg();
+        await flow.handle(message);
+        expect(message.thread.name).toBe('fix the session store tests');
+    });
+
+    test('truncates a long thread name to Discord\'s limit', async () => {
+        const { flow } = harness({ transcript: 'refactor the session store and '.repeat(10) });
+        const message = voiceMsg();
+        await flow.handle(message);
+        expect(message.thread.name.length).toBeLessThanOrEqual(50);
+    });
+
+    test('posts in the current thread when the note is already in one', async () => {
+        const { flow, threads } = harness({ autoSendMs: 40 });
+        const message = voiceMsg({ inThread: true });
+        await flow.handle(message);
+
+        expect(message.thread).toBeNull();           // no nested thread
+        expect(message.channel.sent).toHaveLength(1); // channel here *is* the thread
+        await sleep(120);
+        expect(threads[0]).toBe(message.channel);
+    });
+
+    test('falls back to the channel when a thread cannot be opened', async () => {
+        const { flow, dispatched } = harness({ autoSendMs: 40 });
+        const message = voiceMsg({ threadFails: true });
+        await flow.handle(message);
+
+        expect(message.thread).toBeNull();
+        expect(cardOf(message).content).toContain('run the tests');
+        await sleep(120);
+        expect(dispatched).toEqual(['run the tests']);
+    });
+
+    test('posts in the DM channel when there is no guild', async () => {
+        const { flow } = harness();
+        const message = voiceMsg({ guild: null });
+        await flow.handle(message);
+        expect(message.thread).toBeNull();
+        expect(message.channel.sent).toHaveLength(1);
+    });
+
     test('posts a confirm card with the transcript and three buttons', async () => {
         const { flow, dispatched } = harness();
         const message = voiceMsg();
         await flow.handle(message);
 
         expect(message.reactions).toContain('🎙️');
-        expect(message.card.content).toContain('```text\nrun the tests\n```');
-        expect(message.card.content).toContain('Sending <t:');
-        const ids = message.card.components[0].components.map(b => b.data.custom_id.split(':')[1]);
+        expect(cardOf(message).content).toContain('```text\nrun the tests\n```');
+        expect(cardOf(message).content).toContain('Sending <t:');
+        const ids = cardOf(message).components[0].components.map(b => b.data.custom_id.split(':')[1]);
         expect(ids).toEqual(['send', 'edit', 'cancel']);
         expect(dispatched).toHaveLength(0); // nothing sent before the window elapses
     });
@@ -210,8 +297,8 @@ describe('voice flow', () => {
 
         await sleep(120);
         expect(dispatched).toEqual(['run the tests']);
-        expect(message.card.content).toContain('✅ Sent to the agent.');
-        expect(message.card.components).toEqual([]);
+        expect(cardOf(message).content).toContain('✅ Sent to the agent.');
+        expect(cardOf(message).components).toEqual([]);
     });
 
     test('"Send now" dispatches immediately and cancels the timer', async () => {
@@ -220,7 +307,7 @@ describe('voice flow', () => {
         await flow.handle(message);
 
         await flow.handleInteraction({
-            customId: `vt:send:${tokenOf(message.card)}`,
+            customId: `vt:send:${tokenOf(cardOf(message))}`,
             deferUpdate: async () => {},
         });
         expect(dispatched).toEqual(['run the tests']);
@@ -235,11 +322,11 @@ describe('voice flow', () => {
         await flow.handle(message);
 
         await flow.handleInteraction({
-            customId: `vt:cancel:${tokenOf(message.card)}`,
+            customId: `vt:cancel:${tokenOf(cardOf(message))}`,
             deferUpdate: async () => {},
         });
-        expect(message.card.content).toContain('🗑️ Discarded.');
-        expect(message.card.content).not.toContain('run the tests');
+        expect(cardOf(message).content).toContain('🗑️ Discarded.');
+        expect(cardOf(message).content).not.toContain('run the tests');
 
         await sleep(120);
         expect(dispatched).toHaveLength(0);
@@ -252,13 +339,13 @@ describe('voice flow', () => {
 
         let shown = null;
         await flow.handleInteraction({
-            customId: `vt:edit:${tokenOf(message.card)}`,
+            customId: `vt:edit:${tokenOf(cardOf(message))}`,
             showModal: async (modal) => { shown = modal; },
         });
 
         expect(shown.data.title).toBe('Edit transcript');
         expect(shown.components[0].components[0].data.value).toBe('run the tests');
-        expect(message.card.content).toContain('⏸️ Auto-send paused');
+        expect(cardOf(message).content).toContain('⏸️ Auto-send paused');
 
         await sleep(120);
         expect(dispatched).toHaveLength(0); // paused, not fired
@@ -268,7 +355,7 @@ describe('voice flow', () => {
         const { flow, dispatched } = harness();
         const message = voiceMsg();
         await flow.handle(message);
-        const token = tokenOf(message.card);
+        const token = tokenOf(cardOf(message));
 
         await flow.handleInteraction({ customId: `vt:edit:${token}`, showModal: async () => {} });
         await flow.handleInteraction({
@@ -278,7 +365,7 @@ describe('voice flow', () => {
         });
 
         expect(dispatched).toEqual(['run the unit tests']);
-        expect(message.card.content).toContain('run the unit tests');
+        expect(cardOf(message).content).toContain('run the unit tests');
     });
 
     test('keeps a typed caption alongside the transcript', async () => {
@@ -293,8 +380,8 @@ describe('voice flow', () => {
         const { flow } = harness({ transcript: 'use ``` to fence' });
         const message = voiceMsg();
         await flow.handle(message);
-        expect(message.card.content).toContain('use ʼʼʼ to fence');
-        expect(message.card.content.match(/```/g)).toHaveLength(2);
+        expect(cardOf(message).content).toContain('use ʼʼʼ to fence');
+        expect(cardOf(message).content.match(/```/g)).toHaveLength(2);
     });
 
     test('keeps the card under the Discord limit for a long dictation', async () => {
@@ -303,15 +390,15 @@ describe('voice flow', () => {
         const message = voiceMsg();
         await flow.handle(message);
 
-        expect(message.card.content.length).toBeLessThan(2000);
-        expect(message.card.content).toContain('…');
+        expect(cardOf(message).content.length).toBeLessThan(2000);
+        expect(cardOf(message).content).toContain('…');
         // Editing can't round-trip through a 4000-char modal, so it isn't offered.
-        const ids = message.card.components[0].components.map(b => b.data.custom_id.split(':')[1]);
+        const ids = cardOf(message).components[0].components.map(b => b.data.custom_id.split(':')[1]);
         expect(ids).toEqual(['send', 'cancel']);
-        expect(message.card.content).toContain('Too long to edit here');
+        expect(cardOf(message).content).toContain('Too long to edit here');
 
         await sleep(120);
-        expect(message.card.content.length).toBeLessThan(2000);
+        expect(cardOf(message).content.length).toBeLessThan(2000);
         // ...but the agent still receives every word.
         expect(dispatched[0]).toBe(long);
     });
@@ -371,7 +458,7 @@ describe('voice flow', () => {
         const { flow, dispatched } = harness();
         const message = voiceMsg();
         await flow.handle(message);
-        const token = tokenOf(message.card);
+        const token = tokenOf(cardOf(message));
 
         await flow.handleInteraction({ customId: `vt:send:${token}`, deferUpdate: async () => {} });
         let replied = null;

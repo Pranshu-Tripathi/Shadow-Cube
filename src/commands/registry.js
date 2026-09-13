@@ -29,8 +29,8 @@ function createCommandRegistry(context) {
 
     // Approved transcripts skip the command loop on purpose — a misheard `!destroy`
     // is not a risk worth taking. Voice reaches the agent, never the commands.
-    function dispatchTranscript(message, transcript) {
-        return agentMessageHandler.execute({ message, cleanPrompt: transcript, context });
+    function dispatchTranscript(message, transcript, thread) {
+        return agentMessageHandler.execute({ message, cleanPrompt: transcript, context, thread });
     }
 
     const voice = createVoice({
