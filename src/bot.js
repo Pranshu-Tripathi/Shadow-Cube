@@ -14,11 +14,16 @@ const { createClaudeRunner } = require('./providers/claude/claudeRunner');
 const { createAgentRouter } = require('./providers/agentRouter');
 const { createCommandRegistry } = require('./commands/registry');
 const { runCodex, clearCodexSession, handleCodexApproval } = require('./providers/codex');
+const { createTranscriber } = require('./voice/transcriber');
+const { createVocabulary } = require('./voice/vocabulary');
+const { createCleanup } = require('./voice/cleanup');
 
 function createBot() {
-    if (!config.DISCORD_TOKEN) {
-        console.error('DISCORD_TOKEN is required. Set it in your .env file.');
-        process.exit(1);
+    // Discord is optional: the local web interface (port 8200) is the home base and
+    // runs with or without a token. Without one, we simply never log the client in.
+    const discordEnabled = !!config.DISCORD_TOKEN;
+    if (!discordEnabled) {
+        console.warn('[DEBUG] No DISCORD_TOKEN set — running web-only (Discord disabled).');
     }
 
     const client = new Client({
@@ -56,6 +61,12 @@ function createBot() {
         runCodex,
     });
 
+    // Voice primitives are shared between Discord voice notes and the web voice mode
+    // so the whisper model is warmed and used once, not per-transport.
+    const transcriber = createTranscriber({ config });
+    const vocabulary = createVocabulary({ config });
+    const cleanup = createCleanup({ config });
+
     const context = {
         config,
         client,
@@ -71,6 +82,9 @@ function createBot() {
         questionFlow,
         agentRouter,
         clearCodexSession,
+        transcriber,
+        vocabulary,
+        cleanup,
     };
     const commandRegistry = createCommandRegistry(context);
 
@@ -113,12 +127,14 @@ function createBot() {
     function start() {
         process.on('SIGINT', () => shutdown('SIGINT'));
         process.on('SIGTERM', () => shutdown('SIGTERM'));
+        if (!discordEnabled) return Promise.resolve();
         return client.login(config.DISCORD_TOKEN);
     }
 
     return {
         client,
         context,
+        discordEnabled,
         start,
         shutdown,
     };

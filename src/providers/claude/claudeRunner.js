@@ -215,7 +215,11 @@ function createClaudeRunner({
                 const req = data.request;
                 const requestId = data.request_id;
                 if (req.tool_name === 'AskUserQuestion') {
-                    questionFlow.handleAskUserQuestion(targetChannel, child, requestId, req.tool_use_id, req.input || {});
+                    if (targetChannel.__sinkKind === 'web') {
+                        targetChannel.askQuestion(child, requestId, req.tool_use_id, req.input || {});
+                    } else {
+                        questionFlow.handleAskUserQuestion(targetChannel, child, requestId, req.tool_use_id, req.input || {});
+                    }
                 } else {
                     writeStdin(child, {
                         type: 'control_response',

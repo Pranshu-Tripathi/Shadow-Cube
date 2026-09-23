@@ -1,0 +1,663 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Shadow Cube — Notebook</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --panel2: #1e222b; --border: #2a2f3a;
+    --text: #e6e9ef; --muted: #8b93a3; --accent: #6ea8fe; --accent2: #7ee787;
+    --user: #2b3550; --danger: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; }
+  button { font: inherit; cursor: pointer; border: 1px solid var(--border); background: var(--panel2); color: var(--text); border-radius: 6px; padding: 6px 10px; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: #0b1020; border-color: var(--accent); font-weight: 600; }
+  input, textarea, select { font: inherit; background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px; width: 100%; }
+  textarea { resize: vertical; min-height: 60px; }
+  a { color: var(--accent); }
+
+  /* Sidebar */
+  #sidebar { width: 280px; background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; }
+  #sidebar header { padding: 14px 16px; border-bottom: 1px solid var(--border); font-weight: 700; letter-spacing: .3px; }
+  #sidebar header small { display:block; color: var(--muted); font-weight: 400; font-size: 11px; }
+  #ws-list { overflow-y: auto; flex: 1; }
+  .ws-item { padding: 10px 16px; border-bottom: 1px solid var(--border); cursor: pointer; }
+  .ws-item:hover { background: var(--panel2); }
+  .ws-item.active { background: var(--panel2); border-left: 3px solid var(--accent); }
+  .ws-item .name { font-weight: 600; }
+  .ws-item .meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .badge { font-size: 10px; padding: 1px 6px; border-radius: 10px; background: var(--border); color: var(--text); margin-left: 6px; }
+  .badge.on { background: var(--accent2); color: #08210f; }
+  #new-ws-btn { margin: 12px 16px; }
+
+  /* Main */
+  #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #topbar { padding: 10px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; background: var(--panel); }
+  #topbar .title { font-weight: 700; }
+  #topbar .spacer { flex: 1; }
+  #tabs { display: flex; gap: 6px; padding: 8px 16px; border-bottom: 1px solid var(--border); overflow-x: auto; background: var(--panel); }
+  .tab { padding: 5px 12px; border-radius: 6px 6px 0 0; white-space: nowrap; }
+  .tab.active { background: var(--accent); color: #0b1020; border-color: var(--accent); }
+  #transcript { flex: 1; overflow-y: auto; padding: 16px; }
+  .msg { margin-bottom: 12px; max-width: 900px; }
+  .msg .who { font-size: 11px; color: var(--muted); margin-bottom: 3px; }
+  .msg .body { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; word-wrap: break-word; font-size: 14px; line-height: 1.5; }
+  .msg.user .body { background: var(--user); white-space: pre-wrap; }
+  .msg.cost .body { background: transparent; border: none; color: var(--muted); font-style: italic; padding: 2px; }
+
+  /* Markdown */
+  .md > *:first-child { margin-top: 0; } .md > *:last-child { margin-bottom: 0; }
+  .md p { margin: 6px 0; } .md h1,.md h2,.md h3 { margin: 10px 0 6px; line-height: 1.25; }
+  .md h1 { font-size: 1.3em; } .md h2 { font-size: 1.15em; } .md h3 { font-size: 1.05em; }
+  .md ul,.md ol { margin: 6px 0; padding-left: 22px; } .md li { margin: 2px 0; }
+  .md blockquote { border-left: 3px solid var(--border); margin: 6px 0; padding: 2px 0 2px 10px; color: var(--muted); }
+  .md code.inline { background: var(--panel2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; font-family: ui-monospace, monospace; font-size: 12.5px; }
+  .md a { color: var(--accent); }
+  pre.code { background: #0b0d12; border: 1px solid var(--border); border-radius: 8px; margin: 8px 0; overflow: hidden; }
+  pre.code .lang { display: block; font-size: 10px; color: var(--muted); padding: 4px 10px; border-bottom: 1px solid var(--border); text-transform: uppercase; letter-spacing: .5px; }
+  pre.code code { display: block; padding: 10px; overflow-x: auto; font-family: ui-monospace, monospace; font-size: 12.5px; line-height: 1.45; white-space: pre; }
+  pre.code code .add { color: var(--accent2); } pre.code code .del { color: var(--danger); }
+
+  /* Collapsible tool calls + thinking */
+  details.tool, details.think { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 10px; background: var(--panel); max-width: 900px; }
+  details.think { background: transparent; border-style: dashed; }
+  details > summary { cursor: pointer; padding: 8px 12px; font-size: 13px; list-style: none; display: flex; align-items: center; gap: 8px; user-select: none; }
+  details > summary::-webkit-details-marker { display: none; }
+  details > summary::before { content: '▶'; font-size: 9px; color: var(--muted); transition: transform .12s; }
+  details[open] > summary::before { transform: rotate(90deg); }
+  details.tool > summary { font-family: ui-monospace, monospace; color: var(--accent); }
+  details.think > summary { color: var(--muted); font-style: italic; }
+  .tool-body, .think-body { padding: 0 12px 10px; }
+  .question { border: 1px solid var(--accent); border-radius: 8px; padding: 12px; margin-bottom: 12px; background: var(--panel); }
+  .question h4 { margin: 0 0 8px; }
+  .question .opts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  #voice-status { padding: 0 16px; height: 18px; font-size: 12px; color: var(--accent2); background: var(--panel); }
+  #composer { border-top: 1px solid var(--border); padding: 4px 16px 12px; display: flex; gap: 8px; background: var(--panel); }
+  #mic-btn.rec { background: var(--danger); border-color: var(--danger); }
+  #call-btn.on { background: var(--accent2); color: #08210f; border-color: var(--accent2); }
+  #composer textarea { flex: 1; }
+  #empty { margin: auto; color: var(--muted); text-align: center; }
+
+  /* Modal */
+  #overlay { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: none; align-items: center; justify-content: center; }
+  #overlay.show { display: flex; }
+  .modal { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 20px; width: 440px; max-width: 90vw; }
+  .modal h3 { margin-top: 0; }
+  .field { margin-bottom: 12px; }
+  .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .modal .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+  #status { font-size: 12px; color: var(--muted); }
+  .dot { display:inline-block; width:8px; height:8px; border-radius:50%; background: var(--danger); margin-right:5px; }
+  .dot.ok { background: var(--accent2); }
+</style>
+</head>
+<body>
+  <aside id="sidebar">
+    <header>Shadow Cube <small><span id="status"><span class="dot"></span>connecting…</span></small></header>
+    <button id="new-ws-btn" class="primary">+ New workspace</button>
+    <div id="ws-list"></div>
+  </aside>
+
+  <main id="main">
+    <div id="empty">Select or create a workspace to begin.</div>
+    <div id="workspace-view" style="display:none; flex-direction:column; flex:1; min-height:0;">
+      <div id="topbar">
+        <span class="title" id="ws-title"></span>
+        <span id="ws-project" style="color:var(--muted); font-size:13px;"></span>
+        <span class="spacer"></span>
+        <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:var(--muted);">
+          Provider
+          <select id="provider-select" style="width:auto; padding:4px 6px;">
+            <option value="claude">claude</option>
+            <option value="codex">codex</option>
+          </select>
+        </label>
+        <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:var(--muted);">
+          <input type="checkbox" id="broadcast-toggle" style="width:auto;" /> Broadcast to Discord
+        </label>
+        <button id="memory-btn">Memory</button>
+      </div>
+      <div id="tabs"></div>
+      <div id="transcript"></div>
+      <div id="voice-status"></div>
+      <div id="composer">
+        <textarea id="prompt" placeholder="Message the agent…  (Enter to send, Shift+Enter for newline)"></textarea>
+        <div style="display:flex; flex-direction:column; gap:6px;">
+          <div style="display:flex; gap:6px;">
+            <button id="mic-btn" title="Hold to talk" style="display:none;">🎙️</button>
+            <button id="call-btn" title="Hands-free call mode" style="display:none;">📞</button>
+          </div>
+          <button id="send-btn" class="primary">Send</button>
+          <button id="clear-btn">Clear</button>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <div id="overlay">
+    <div class="modal" id="modal-content"></div>
+  </div>
+
+<script>
+const $ = (sel) => document.querySelector(sel);
+const api = (path, opts) => fetch(path, { headers: { 'content-type': 'application/json' }, ...opts }).then(r => r.json());
+const esc = (s) => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+const state = {
+  workspaces: [],
+  activeWs: null,
+  // workspaceId -> [convId, ...]
+  convs: JSON.parse(localStorage.getItem('sc.convs') || '{}'),
+  activeConv: null,
+  // convId -> [{msgId, role, content, type}]
+  messages: {},
+  pendingQuestion: {}, // convId -> questions
+  // convId -> provider (thread-dependent choice)
+  providers: JSON.parse(localStorage.getItem('sc.providers') || '{}'),
+  // convId -> { name, source }  (source: 'discord' | 'web')
+  convMeta: {},
+  ws: null,
+};
+
+function saveConvs() { localStorage.setItem('sc.convs', JSON.stringify(state.convs)); }
+function saveProviders() { localStorage.setItem('sc.providers', JSON.stringify(state.providers)); }
+function providerFor(convId) { return state.providers[convId] || state.activeWs?.provider || 'claude'; }
+
+/* ---------- WebSocket ---------- */
+function connectWS() {
+  const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
+  state.ws = ws;
+  ws.onopen = () => {
+    $('#status').innerHTML = '<span class="dot ok"></span>connected';
+    // Re-subscribe to every known conversation for replay.
+    Object.values(state.convs).flat().forEach(cid => ws.send(JSON.stringify({ type: 'subscribe', convId: cid })));
+  };
+  ws.onclose = () => { $('#status').innerHTML = '<span class="dot"></span>disconnected — retrying…'; setTimeout(connectWS, 1500); };
+  ws.onmessage = (e) => handleFrame(JSON.parse(e.data));
+}
+
+function handleFrame(f) {
+  if (!f.convId) return;
+  if (f.type === 'question') {
+    state.pendingQuestion[f.convId] = f.questions;
+    if (f.convId === state.activeConv) renderTranscript();
+    return;
+  }
+  const list = state.messages[f.convId] || (state.messages[f.convId] = []);
+  if (f.type === 'message.update') {
+    const m = list.find(x => x.msgId === f.msgId);
+    if (m) m.content = f.content; else list.push(f);
+  } else if (f.type === 'message.create') {
+    list.push(f);
+  } else { return; }
+  if (f.convId === state.activeConv) renderTranscript();
+}
+
+/* ---------- Workspaces ---------- */
+async function loadWorkspaces() {
+  const { workspaces } = await api('/api/workspaces');
+  state.workspaces = workspaces;
+  renderSidebar();
+}
+
+function renderSidebar() {
+  const el = $('#ws-list');
+  el.innerHTML = '';
+  state.workspaces.forEach(ws => {
+    const div = document.createElement('div');
+    div.className = 'ws-item' + (ws.id === state.activeWs?.id ? ' active' : '');
+    div.innerHTML = `<div class="name">${esc(ws.name)}${ws.isWeb ? '' : '<span class="badge">discord</span>'}${ws.broadcastDiscord ? '<span class="badge on">bcast</span>' : ''}</div>
+      <div class="meta">${esc(ws.projectName || 'no project')} · ${esc(ws.provider)}${ws.baseBranch ? ' · ' + esc(ws.baseBranch) : ''}</div>`;
+    div.onclick = () => selectWorkspace(ws.id);
+    el.appendChild(div);
+  });
+}
+
+async function selectWorkspace(id) {
+  state.activeWs = state.workspaces.find(w => w.id === id);
+  renderSidebar();
+  // Merge server-known conversations (live Discord threads + bound web chats) with
+  // any locally-created chats, so existing Discord threads show up in the workspace.
+  let server = [];
+  try { server = (await api(`/api/workspaces/${encodeURIComponent(id)}/conversations`)).conversations || []; } catch {}
+  const ids = [];
+  server.forEach(c => { ids.push(c.id); state.convMeta[c.id] = { name: c.name, source: c.source }; });
+  (state.convs[id] || []).forEach(cid => { if (!ids.includes(cid)) ids.push(cid); });
+  if (ids.length === 0) ids.push('conv-' + Math.random().toString(36).slice(2, 9));
+  state.convs[id] = ids; saveConvs();
+  state.activeConv = ids[0];
+  await openConv(state.activeConv);
+  renderWorkspace();
+}
+
+function subscribe(convId) {
+  if (state.ws && state.ws.readyState === 1) state.ws.send(JSON.stringify({ type: 'subscribe', convId }));
+}
+
+// Subscribe to a conversation and, for Discord-originated ones with no loaded
+// messages yet, pull recent Discord history so there's context to read.
+async function openConv(convId) {
+  subscribe(convId);
+  const meta = state.convMeta[convId];
+  if (meta?.source === 'discord' && (!state.messages[convId] || state.messages[convId].length === 0)) {
+    try {
+      const { messages } = await api(`/api/workspaces/${encodeURIComponent(state.activeWs.id)}/conversations/${convId}/history`);
+      if (messages && messages.length) state.messages[convId] = messages;
+    } catch {}
+  }
+}
+
+function renderWorkspace() {
+  const ws = state.activeWs;
+  $('#empty').style.display = 'none';
+  $('#workspace-view').style.display = 'flex';
+  $('#ws-title').textContent = ws.name;
+  $('#ws-project').textContent = ws.projectDir ? ('— ' + ws.projectDir) : '— (no project set)';
+  $('#broadcast-toggle').checked = ws.broadcastDiscord;
+  renderTabs();
+  renderTranscript();
+}
+
+function renderTabs() {
+  const el = $('#tabs');
+  el.innerHTML = '';
+  const list = state.convs[state.activeWs.id] || [];
+  list.forEach((cid, i) => {
+    const b = document.createElement('button');
+    b.className = 'tab' + (cid === state.activeConv ? ' active' : '');
+    const meta = state.convMeta[cid];
+    b.textContent = (meta && meta.name) ? meta.name : ('Chat ' + (i + 1));
+    if (meta && meta.source === 'discord') b.title = 'Discord thread';
+    b.onclick = async () => { state.activeConv = cid; await openConv(cid); renderTabs(); renderTranscript(); };
+    el.appendChild(b);
+  });
+  const add = document.createElement('button');
+  add.className = 'tab'; add.textContent = '+';
+  add.onclick = () => {
+    const cid = 'conv-' + Math.random().toString(36).slice(2, 9);
+    state.convs[state.activeWs.id].push(cid); saveConvs();
+    state.activeConv = cid; subscribe(cid); renderTabs(); renderTranscript();
+  };
+  el.appendChild(add);
+  $('#provider-select').value = providerFor(state.activeConv);
+}
+
+/* ---------- Minimal markdown renderer (no deps) ---------- */
+function highlightDiff(code) {
+  return code.split('\n').map(l => {
+    if (l.startsWith('+')) return `<span class="add">${esc(l)}</span>`;
+    if (l.startsWith('-')) return `<span class="del">${esc(l)}</span>`;
+    return esc(l);
+  }).join('\n');
+}
+function md(src) {
+  if (!src) return '';
+  const blocks = [];
+  // Pull out fenced code blocks first so inline rules don't touch them.
+  let text = src.replace(/```([a-zA-Z0-9]*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+    const body = lang === 'diff' ? highlightDiff(code.replace(/\n$/, '')) : esc(code.replace(/\n$/, ''));
+    const i = blocks.push(`<pre class="code">${lang ? `<span class="lang">${esc(lang)}</span>` : ''}<code>${body}</code></pre>`) - 1;
+    return ` B${i} `;
+  });
+  const inline = (s) => esc(s)
+    .replace(/`([^`]+)`/g, (_, c) => `<code class="inline">${c}</code>`)
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  const lines = text.split('\n');
+  let html = '', list = null;
+  const closeList = () => { if (list) { html += `</${list}>`; list = null; } };
+  for (let raw of lines) {
+    const ph = raw.match(/^ B(\d+) $/);
+    if (ph) { closeList(); html += blocks[+ph[1]]; continue; }
+    if (!raw.trim()) { closeList(); continue; }
+    let m;
+    if ((m = raw.match(/^(#{1,3})\s+(.*)/))) { closeList(); html += `<h${m[1].length}>${inline(m[2])}</h${m[1].length}>`; }
+    else if ((m = raw.match(/^>\s?(.*)/))) { closeList(); html += `<blockquote>${inline(m[1])}</blockquote>`; }
+    else if ((m = raw.match(/^[-*]\s+(.*)/))) { if (list !== 'ul') { closeList(); html += '<ul>'; list = 'ul'; } html += `<li>${inline(m[1])}</li>`; }
+    else if ((m = raw.match(/^\d+\.\s+(.*)/))) { if (list !== 'ol') { closeList(); html += '<ol>'; list = 'ol'; } html += `<li>${inline(m[1])}</li>`; }
+    else { closeList(); html += `<p>${inline(raw)}</p>`; }
+  }
+  closeList();
+  return html;
+}
+
+function renderTranscript() {
+  const el = $('#transcript');
+  const list = state.messages[state.activeConv] || [];
+  el.innerHTML = '';
+  list.forEach(m => {
+    el.appendChild(renderMessage(m));
+  });
+  const q = state.pendingQuestion[state.activeConv];
+  if (q) el.appendChild(renderQuestion(q));
+  el.scrollTop = el.scrollHeight;
+}
+
+function renderMessage(m) {
+  const kind = m.role === 'user' ? 'user' : (m.kind || 'text');
+  if (kind === 'tool') {
+    const d = document.createElement('details');
+    d.className = 'tool';
+    // Drop the first (title) line from the body — it's shown in the summary.
+    const body = (m.content || '').split('\n').slice(1).join('\n');
+    d.innerHTML = `<summary>🔧 ${esc(m.title || 'tool')}</summary><div class="tool-body md">${md(body)}</div>`;
+    return d;
+  }
+  if (kind === 'thinking') {
+    const d = document.createElement('details');
+    d.className = 'think';
+    const body = (m.content || '').replace(/^\*\*Thinking[^\n]*\*\*\n?/, '');
+    d.innerHTML = `<summary>💭 Thinking</summary><div class="think-body md">${md(body)}</div>`;
+    return d;
+  }
+  const div = document.createElement('div');
+  div.className = 'msg ' + (kind === 'user' ? 'user' : kind === 'cost' ? 'cost' : 'agent');
+  const who = kind === 'user' ? 'you' : 'agent';
+  const bodyHtml = kind === 'user' ? esc(m.content) : md(m.content);
+  div.innerHTML = `<div class="who">${who}</div><div class="body md">${bodyHtml}</div>`;
+  return div;
+}
+
+function renderQuestion(questions) {
+  const wrap = document.createElement('div');
+  const answers = {};          // question -> label | [labels]
+  const multiSel = {};         // qi -> Set of labels (for multiSelect)
+
+  function submit() {
+    api(`/api/workspaces/${encodeURIComponent(state.activeWs.id)}/conversations/${state.activeConv}/answer`,
+      { method: 'POST', body: JSON.stringify({ answers }) });
+    delete state.pendingQuestion[state.activeConv];
+    renderTranscript();
+  }
+  function allAnswered() { return questions.every(q => answers[q.question] != null); }
+
+  questions.forEach((q, qi) => {
+    const box = document.createElement('div');
+    box.className = 'question';
+    const total = questions.length;
+    box.innerHTML = `<h4>❓ ${esc(q.header || '')}${total > 1 ? ` <span style="color:var(--muted);font-weight:400">(${qi + 1}/${total})</span>` : ''}</h4>`
+      + `<div class="md">${md(q.question)}</div>`
+      + (q.multiSelect ? '<div style="font-size:12px;color:var(--muted);margin-top:4px">Select one or more.</div>' : '');
+    const opts = document.createElement('div');
+    opts.className = 'opts';
+    if (q.multiSelect) multiSel[qi] = new Set();
+
+    q.options.forEach(opt => {
+      const b = document.createElement('button');
+      b.style.textAlign = 'left';
+      b.innerHTML = `<div><strong>${esc(opt.label)}</strong>${opt.description ? `<div style="font-size:11px;color:var(--muted);margin-top:2px">${esc(opt.description)}</div>` : ''}</div>`;
+      b.onclick = () => {
+        if (q.multiSelect) {
+          const set = multiSel[qi];
+          if (set.has(opt.label)) { set.delete(opt.label); b.classList.remove('primary'); }
+          else { set.add(opt.label); b.classList.add('primary'); }
+          answers[q.question] = set.size ? [...set] : undefined;
+          if (set.size === 0) delete answers[q.question];
+        } else {
+          answers[q.question] = opt.label;
+          [...opts.children].forEach(c => c.classList.remove('primary'));
+          b.classList.add('primary');
+          if (!questions.some(x => x.multiSelect) && allAnswered()) submit();
+        }
+      };
+      opts.appendChild(b);
+
+      if (opt.preview) {
+        const pre = document.createElement('div');
+        pre.className = 'md';
+        pre.style.width = '100%';
+        pre.innerHTML = md('```\n' + opt.preview + '\n```');
+        opts.appendChild(pre);
+      }
+    });
+    box.appendChild(opts);
+    wrap.appendChild(box);
+  });
+
+  // A submit button is needed whenever any question is multi-select.
+  if (questions.some(q => q.multiSelect)) {
+    const submitBtn = document.createElement('button');
+    submitBtn.className = 'primary';
+    submitBtn.textContent = 'Submit answers';
+    submitBtn.style.marginTop = '4px';
+    submitBtn.onclick = () => { if (allAnswered()) submit(); else alert('Answer every question first.'); };
+    wrap.appendChild(submitBtn);
+  }
+  return wrap;
+}
+
+/* ---------- Actions ---------- */
+async function sendPrompt() {
+  const text = $('#prompt').value.trim();
+  if (!text || !state.activeWs) return;
+  $('#prompt').value = '';
+  await api(`/api/workspaces/${encodeURIComponent(state.activeWs.id)}/conversations/${state.activeConv}/prompt`,
+    { method: 'POST', body: JSON.stringify({ prompt: text, provider: providerFor(state.activeConv) }) });
+}
+
+function changeProvider(e) {
+  if (!state.activeConv) return;
+  state.providers[state.activeConv] = e.target.value;
+  saveProviders();
+}
+
+async function clearConv() {
+  if (!confirm('Clear this conversation and stop any running agent?')) return;
+  await api(`/api/workspaces/${encodeURIComponent(state.activeWs.id)}/conversations/${state.activeConv}/clear`, { method: 'POST' });
+  state.messages[state.activeConv] = [];
+  delete state.pendingQuestion[state.activeConv];
+  renderTranscript();
+}
+
+async function toggleBroadcast(e) {
+  const on = e.target.checked;
+  const res = await api(`/api/workspaces/${encodeURIComponent(state.activeWs.id)}`, { method: 'PATCH', body: JSON.stringify({ broadcastDiscord: on }) });
+  if (res.error) { alert(res.error); e.target.checked = !on; return; }
+  state.activeWs = res.workspace;
+  const idx = state.workspaces.findIndex(w => w.id === state.activeWs.id);
+  if (idx >= 0) state.workspaces[idx] = res.workspace;
+  renderSidebar();
+}
+
+/* ---------- Modals ---------- */
+function openModal(html) { $('#modal-content').innerHTML = html; $('#overlay').classList.add('show'); }
+function closeModal() { $('#overlay').classList.remove('show'); }
+
+function newWorkspaceModal() {
+  openModal(`
+    <h3>New workspace</h3>
+    <div class="field"><label>Name</label><input id="f-name" placeholder="my-feature" /></div>
+    <div class="field"><label>Project name</label><input id="f-pname" placeholder="bunsen" /></div>
+    <div class="field"><label>Project path</label><input id="f-pdir" placeholder="/Users/you/code/bunsen" /></div>
+    <div class="field"><label>Base branch (optional)</label><input id="f-base" placeholder="main" /></div>
+    <div class="field"><label>Provider</label><select id="f-provider"><option value="claude">claude</option><option value="codex">codex</option></select></div>
+    <div class="actions"><button onclick="closeModal()">Cancel</button><button class="primary" id="f-create">Create</button></div>`);
+  $('#f-create').onclick = async () => {
+    const body = {
+      name: $('#f-name').value.trim(),
+      projectName: $('#f-pname').value.trim(),
+      projectDir: $('#f-pdir').value.trim(),
+      baseBranch: $('#f-base').value.trim() || undefined,
+      provider: $('#f-provider').value,
+    };
+    if (!body.projectName || !body.projectDir) { alert('Project name and path are required.'); return; }
+    const { workspace, error } = await api('/api/workspaces', { method: 'POST', body: JSON.stringify(body) });
+    if (error) { alert(error); return; }
+    closeModal();
+    await loadWorkspaces();
+    selectWorkspace(workspace.id);
+  };
+}
+
+async function memoryModal() {
+  const { memory, error } = await api(`/api/workspaces/${encodeURIComponent(state.activeWs.id)}/memory`);
+  if (error) { alert(error); return; }
+  const items = (memory || []).map(m => `<div style="border:1px solid var(--border);border-radius:6px;padding:8px;margin-bottom:8px;"><div style="font-size:11px;color:var(--muted)">${esc(m.name)}</div><div style="white-space:pre-wrap">${esc(m.content)}</div></div>`).join('') || '<div style="color:var(--muted)">No memory yet.</div>';
+  openModal(`
+    <h3>Memory — ${esc(state.activeWs.name)}</h3>
+    <div style="max-height:300px;overflow-y:auto">${items}</div>
+    <div class="field" style="margin-top:12px"><label>Add a lasting note</label><textarea id="m-text" placeholder="Never touch the generated files in dist/"></textarea></div>
+    <div class="actions"><button onclick="closeModal()">Close</button><button class="primary" id="m-add">Add</button></div>`);
+  $('#m-add').onclick = async () => {
+    const text = $('#m-text').value.trim();
+    if (!text) return;
+    await api(`/api/workspaces/${encodeURIComponent(state.activeWs.id)}/memory`, { method: 'POST', body: JSON.stringify({ text }) });
+    memoryModal();
+  };
+}
+
+/* ---------- Voice ---------- */
+const voice = { enabled: false, stream: null, recorder: null, chunks: [], callMode: false,
+  ac: null, analyser: null, raf: null, hadSpeech: false, silenceStart: 0 };
+
+function setVoiceStatus(t) { $('#voice-status').textContent = t || ''; }
+
+function pickMime() {
+  const opts = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'];
+  for (const m of opts) { try { if (window.MediaRecorder && MediaRecorder.isTypeSupported(m)) return m; } catch {} }
+  return '';
+}
+function extFor(mime) { return /mp4/.test(mime) ? 'mp4' : /ogg/.test(mime) ? 'ogg' : 'webm'; }
+
+async function ensureStream() {
+  if (voice.stream) return voice.stream;
+  voice.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  return voice.stream;
+}
+
+async function transcribeBlob(blob, mime) {
+  const res = await fetch(`/api/workspaces/${encodeURIComponent(state.activeWs.id)}/transcribe?ext=${extFor(mime)}`,
+    { method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: blob });
+  return res.json();
+}
+
+/* Push-to-talk: hold the mic, release to drop the transcript into the composer. */
+async function pttStart() {
+  if (!state.activeWs || voice.callMode) return;
+  try {
+    const stream = await ensureStream();
+    const mime = pickMime();
+    voice.chunks = [];
+    voice.recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    voice.recorder.ondataavailable = (e) => { if (e.data.size) voice.chunks.push(e.data); };
+    voice.recorder.onstop = async () => {
+      const blob = new Blob(voice.chunks, { type: voice.recorder.mimeType });
+      $('#mic-btn').classList.remove('rec');
+      if (blob.size < 1200) { setVoiceStatus(''); return; }
+      setVoiceStatus('transcribing…');
+      const { text, error } = await transcribeBlob(blob, voice.recorder.mimeType);
+      setVoiceStatus('');
+      if (error) { alert(error); return; }
+      if (text) { const p = $('#prompt'); p.value = (p.value ? p.value + ' ' : '') + text; p.focus(); }
+    };
+    voice.recorder.start();
+    $('#mic-btn').classList.add('rec');
+    setVoiceStatus('🎙️ recording… release to transcribe');
+  } catch (e) { setVoiceStatus(''); alert('Mic error: ' + e.message); }
+}
+function pttStop() {
+  if (voice.recorder && voice.recorder.state !== 'inactive' && !voice.callMode) voice.recorder.stop();
+}
+
+/* Hands-free call mode: browser VAD segments speech, each utterance auto-sends. */
+const VAD_THRESHOLD = 0.015, VAD_SILENCE_MS = 900;
+async function startCall() {
+  if (!state.activeWs) return;
+  try {
+    const stream = await ensureStream();
+    const mime = pickMime();
+    voice.callMode = true;
+    $('#call-btn').classList.add('on');
+    voice.ac = new (window.AudioContext || window.webkitAudioContext)();
+    const src = voice.ac.createMediaStreamSource(stream);
+    voice.analyser = voice.ac.createAnalyser();
+    voice.analyser.fftSize = 512;
+    src.connect(voice.analyser);
+    const data = new Uint8Array(voice.analyser.fftSize);
+
+    const startSegment = () => {
+      voice.chunks = [];
+      voice.recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      voice.recorder.ondataavailable = (e) => { if (e.data.size) voice.chunks.push(e.data); };
+      voice.recorder.onstop = async () => {
+        const blob = new Blob(voice.chunks, { type: voice.recorder.mimeType });
+        if (voice.callMode) startSegment();           // immediately listen for the next utterance
+        if (blob.size < 2000) return;
+        const { text, error } = await transcribeBlob(blob, voice.recorder.mimeType);
+        if (!error && text) { $('#prompt').value = text; await sendPrompt(); }
+      };
+      voice.recorder.start();
+    };
+    startSegment();
+
+    voice.hadSpeech = false; voice.silenceStart = 0;
+    const loop = () => {
+      if (!voice.callMode) return;
+      voice.analyser.getByteTimeDomainData(data);
+      let sum = 0; for (let i = 0; i < data.length; i++) { const v = (data[i] - 128) / 128; sum += v * v; }
+      const rms = Math.sqrt(sum / data.length);
+      const now = performance.now();
+      if (rms > VAD_THRESHOLD) {
+        voice.hadSpeech = true; voice.silenceStart = 0; setVoiceStatus('📞 listening… (speaking)');
+      } else if (voice.hadSpeech) {
+        if (!voice.silenceStart) voice.silenceStart = now;
+        else if (now - voice.silenceStart > VAD_SILENCE_MS) {
+          voice.hadSpeech = false; voice.silenceStart = 0;
+          setVoiceStatus('📞 transcribing…');
+          if (voice.recorder && voice.recorder.state === 'recording') voice.recorder.stop();
+        }
+      } else {
+        setVoiceStatus('📞 call mode — waiting for speech');
+      }
+      voice.raf = requestAnimationFrame(loop);
+    };
+    loop();
+  } catch (e) { stopCall(); alert('Mic error: ' + e.message); }
+}
+function stopCall() {
+  voice.callMode = false;
+  $('#call-btn').classList.remove('on');
+  if (voice.raf) cancelAnimationFrame(voice.raf);
+  if (voice.recorder && voice.recorder.state !== 'inactive') { voice.recorder.onstop = null; try { voice.recorder.stop(); } catch {} }
+  voice.recorder = null;
+  if (voice.ac) { voice.ac.close().catch(() => {}); voice.ac = null; }
+  if (voice.stream) { voice.stream.getTracks().forEach((t) => t.stop()); voice.stream = null; }
+  setVoiceStatus('');
+}
+function toggleCall() { voice.callMode ? stopCall() : startCall(); }
+
+/* ---------- Wire up ---------- */
+$('#new-ws-btn').onclick = newWorkspaceModal;
+$('#send-btn').onclick = sendPrompt;
+$('#clear-btn').onclick = clearConv;
+$('#memory-btn').onclick = memoryModal;
+$('#provider-select').onchange = changeProvider;
+$('#broadcast-toggle').onchange = toggleBroadcast;
+
+// Voice controls (shown only when the server reports whisper is available).
+const micBtn = $('#mic-btn'), callBtn = $('#call-btn');
+micBtn.addEventListener('mousedown', pttStart);
+micBtn.addEventListener('mouseup', pttStop);
+micBtn.addEventListener('mouseleave', pttStop);
+micBtn.addEventListener('touchstart', (e) => { e.preventDefault(); pttStart(); });
+micBtn.addEventListener('touchend', (e) => { e.preventDefault(); pttStop(); });
+callBtn.onclick = toggleCall;
+
+api('/api/health').then((h) => {
+  voice.enabled = !!h.voice;
+  if (voice.enabled) { micBtn.style.display = ''; callBtn.style.display = ''; }
+}).catch(() => {});
+$('#overlay').onclick = (e) => { if (e.target.id === 'overlay') closeModal(); };
+$('#prompt').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendPrompt(); }
+});
+
+connectWS();
+loadWorkspaces();
+</script>
+</body>
+</html>

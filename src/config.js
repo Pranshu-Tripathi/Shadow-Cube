@@ -7,6 +7,11 @@ const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const PROJECT_DIR = process.env.PROJECT_DIR || process.cwd();
 const BRANCH_PREFIX = process.env.BRANCH_PREFIX != null ? process.env.BRANCH_PREFIX : 'shadow-cube';
 const GITHUB_PAT = process.env.GITHUB_PAT;
+const WEB_PORT = Number(process.env.WEB_PORT || 8200);
+// Guild the web notebook creates Discord mirror channels in. Optional — defaults to
+// the first guild the bot is a member of.
+const DISCORD_GUILD_ID = process.env.DISCORD_GUILD_ID || null;
+const WEB_ENABLED = process.env.WEB_ENABLED !== '0' && process.env.WEB_ENABLED !== 'false';
 
 const SESSIONS_DIR = path.join(ROOT_DIR, 'sessions');
 const SESSIONS_CONFIG_PATH = path.join(SESSIONS_DIR, 'config.json');
@@ -70,6 +75,9 @@ module.exports = {
     PROJECT_DIR,
     BRANCH_PREFIX,
     GITHUB_PAT,
+    WEB_PORT,
+    WEB_ENABLED,
+    DISCORD_GUILD_ID,
     SESSIONS_DIR,
     SESSIONS_CONFIG_PATH,
     CONFIG_DIR,
