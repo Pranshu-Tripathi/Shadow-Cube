@@ -79,13 +79,15 @@ function createBot() {
         console.log(`[DEBUG] SHADOW CUBE V4.0 (PROVIDERS: CLAUDE, CODEx) + MEMORY ENABLED`);
         console.log(`[DEBUG] PROJECT_DIR: ${config.PROJECT_DIR}`);
         console.log(`[DEBUG] WORKTREES_ROOT: ${config.WORKTREES_ROOT}`);
+        commandRegistry.voice.start();
         console.log('--------------------------------------------------');
     });
 
     client.on(Events.InteractionCreate, async (interaction) => {
-        if (!interaction.isButton() && !interaction.isStringSelectMenu()) return;
         const customId = interaction.customId || '';
         if (customId.startsWith('cxa:')) return handleCodexApproval(interaction);
+        if (customId.startsWith('vt:')) return commandRegistry.voice.handleInteraction(interaction);
+        if (!interaction.isButton() && !interaction.isStringSelectMenu()) return;
         await questionFlow.handleInteraction(interaction);
     });
 
