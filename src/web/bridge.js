@@ -62,14 +62,26 @@ function createWebBridge(context, hub) {
             ? await client.guilds.fetch(config.DISCORD_GUILD_ID).catch(() => null)
             : client.guilds.cache.first();
         if (!guild) throw new Error('Bot is not in any Discord guild.');
+
+        const wantName = worktrees.sanitizeChannelName(getWorkspaceName(workspaceId)) || 'shadow-cube';
+
+        // Reuse a channel with the same name if one already exists (e.g. you created it
+        // by hand), so we don't need the "Manage Channels" permission to create one.
+        try {
+            const existing = (await guild.channels.fetch()).find(
+                (c) => c && c.type === ChannelType.GuildText && c.name === wantName
+            );
+            if (existing) {
+                channelStore.updateChannel(workspaceId, { discordChannelId: existing.id });
+                return existing.id;
+            }
+        } catch { /* fall through to creation */ }
+
         let channel;
         try {
-            channel = await guild.channels.create({
-                name: worktrees.sanitizeChannelName(getWorkspaceName(workspaceId)) || 'shadow-cube',
-                type: ChannelType.GuildText,
-            });
+            channel = await guild.channels.create({ name: wantName, type: ChannelType.GuildText });
         } catch (e) {
-            throw new Error(`${e.message} — the bot needs the "Manage Channels" permission to create a broadcast channel.`);
+            throw new Error(`No channel named "${wantName}" found and could not create one: ${e.message} — either create a channel named "${wantName}" by hand, or give the bot the "Manage Channels" permission.`);
         }
         channelStore.updateChannel(workspaceId, { discordChannelId: channel.id });
         return channel.id;
