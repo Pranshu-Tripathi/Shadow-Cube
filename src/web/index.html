@@ -118,6 +118,7 @@
         <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:var(--muted);">
           <input type="checkbox" id="broadcast-toggle" style="width:auto;" /> Broadcast to Discord
         </label>
+        <button id="settings-btn">⚙️ Settings</button>
         <button id="memory-btn">Memory</button>
       </div>
       <div id="tabs"></div>
@@ -630,8 +631,63 @@ function stopCall() {
 }
 function toggleCall() { voice.callMode ? stopCall() : startCall(); }
 
+async function settingsModal() {
+  const ws = state.activeWs;
+  openModal(`
+    <h3>Settings — ${esc(ws.name)}</h3>
+    <div style="max-height:60vh;overflow-y:auto">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:6px">PROJECT</div>
+      <div class="field"><label>Name</label><input id="s-name" value="${esc(ws.name)}" /></div>
+      <div class="field"><label>Project name</label><input id="s-pname" value="${esc(ws.projectName || '')}" /></div>
+      <div class="field"><label>Project path</label><input id="s-pdir" value="${esc(ws.projectDir || '')}" /></div>
+      <div class="field"><label>Base branch</label><input id="s-base" value="${esc(ws.baseBranch || '')}" placeholder="(default branch)" /></div>
+      <div class="field"><label>Default provider</label><select id="s-provider"><option value="claude">claude</option><option value="codex">codex</option></select></div>
+      <div class="actions" style="justify-content:flex-start"><button class="primary" id="s-save">Save project</button><button id="s-worktree">Set up worktree (.out, skills)</button></div>
+
+      <div style="font-size:12px;color:var(--muted);margin:18px 0 6px">RULES REPO ${ws.hasSystemPrompt ? '· <span style="color:var(--accent2)">system prompt set</span>' : ''}</div>
+      <div class="field"><label>Repo (owner/repo or URL)</label><input id="s-repo" value="${esc(ws.rulesRepo || '')}" placeholder="pranshu-sdgr/Prompt-Manager" /></div>
+      <div class="actions" style="justify-content:flex-start"><button id="s-repo-save">Save repo</button></div>
+      <div class="field" style="margin-top:12px"><label>Pull path (repo-relative, e.g. bunsen)</label><input id="s-rpath" value="${esc(ws.rulesPath || '')}" /></div>
+      <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="s-prompt" style="width:auto" checked /> system prompt (&lt;path&gt;/system.md)</label>
+      <label style="display:flex;gap:6px;align-items:center;font-size:13px;margin-top:6px"><input type="checkbox" id="s-skill" style="width:auto" checked /> skills (&lt;path&gt;/skills/**)</label>
+      <div class="actions" style="justify-content:flex-start"><button class="primary" id="s-pull">Pull from repo</button></div>
+      <div id="s-result" style="font-size:12px;color:var(--muted);margin-top:8px;white-space:pre-wrap"></div>
+    </div>
+    <div class="actions"><button onclick="closeModal()">Close</button></div>`);
+  $('#s-provider').value = ws.provider || 'claude';
+
+  const setResult = (t) => { $('#s-result').textContent = t; };
+  $('#s-save').onclick = async () => {
+    const res = await api(`/api/workspaces/${encodeURIComponent(ws.id)}`, { method: 'PATCH', body: JSON.stringify({
+      name: $('#s-name').value.trim(), projectName: $('#s-pname').value.trim(),
+      projectDir: $('#s-pdir').value.trim(), baseBranch: $('#s-base').value.trim(), provider: $('#s-provider').value,
+    }) });
+    if (res.error) { setResult('❌ ' + res.error); return; }
+    state.activeWs = res.workspace;
+    const i = state.workspaces.findIndex(w => w.id === ws.id); if (i >= 0) state.workspaces[i] = res.workspace;
+    renderSidebar(); renderWorkspace(); setResult('✅ Saved.');
+  };
+  $('#s-worktree').onclick = async () => {
+    setResult('Setting up worktree…');
+    const res = await api(`/api/workspaces/${encodeURIComponent(ws.id)}/worktree/setup`, { method: 'POST' });
+    setResult(res.error ? ('❌ ' + res.error) : `✅ Worktree ready at ${res.worktreePath} (base ${res.baseBranch})`);
+  };
+  $('#s-repo-save').onclick = async () => {
+    const res = await api(`/api/workspaces/${encodeURIComponent(ws.id)}/repo/config`, { method: 'POST', body: JSON.stringify({ repo: $('#s-repo').value.trim() }) });
+    setResult(res.error ? ('❌ ' + res.error) : `✅ Rules repo set to ${res.rulesRepo}${res.warnNoPat ? ' (⚠️ GITHUB_PAT not set — private repos will fail)' : ''}`);
+  };
+  $('#s-pull').onclick = async () => {
+    setResult('Pulling…');
+    const res = await api(`/api/workspaces/${encodeURIComponent(ws.id)}/repo/pull`, { method: 'POST', body: JSON.stringify({
+      path: $('#s-rpath').value.trim(), prompt: $('#s-prompt').checked, skill: $('#s-skill').checked,
+    }) });
+    setResult(res.error ? ('❌ ' + res.error) : `✅ Pull from ${state.activeWs.rulesRepo || 'repo'} (ref ${res.ref}):\n${res.results.join('\n')}`);
+  };
+}
+
 /* ---------- Wire up ---------- */
 $('#new-ws-btn').onclick = newWorkspaceModal;
+$('#settings-btn').onclick = settingsModal;
 $('#send-btn').onclick = sendPrompt;
 $('#clear-btn').onclick = clearConv;
 $('#memory-btn').onclick = memoryModal;

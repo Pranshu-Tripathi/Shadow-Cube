@@ -4,9 +4,29 @@
 // and Discord drive the exact same engine.
 
 const path = require('path');
+const os = require('os');
+const { execSync } = require('child_process');
 const { createWebHub } = require('./webHub');
 const { createWebBridge } = require('./bridge');
 const { createWebVoice } = require('./voiceWeb');
+const { normalizeRepoSlug } = require('../github/githubClient');
+
+// Expand ~ and resolve to an absolute path (mirrors the Discord !project command).
+function resolvePath(input) {
+    let resolved = input;
+    if (resolved === '~') resolved = os.homedir();
+    else if (resolved.startsWith('~/')) resolved = path.join(os.homedir(), resolved.slice(2));
+    return path.resolve(resolved);
+}
+
+function isGitRepo(dir) {
+    try {
+        execSync('git rev-parse --is-inside-work-tree', { cwd: dir, stdio: 'pipe' });
+        return true;
+    } catch {
+        return false;
+    }
+}
 
 const INDEX_HTML = path.join(__dirname, 'index.html');
 
@@ -51,6 +71,9 @@ function serializeWorkspace(id, cfg, client) {
         baseBranch: cfg.baseBranch || null,
         broadcastDiscord: !!cfg.broadcastDiscord,
         discordChannelId: cfg.discordChannelId || null,
+        rulesRepo: cfg.rulesRepo || null,
+        rulesPath: cfg.rulesPath || null,
+        hasSystemPrompt: !!cfg.systemPrompt,
         isWeb: id.startsWith('web:'),
     };
 }
@@ -142,12 +165,16 @@ function startWebServer(context, { port } = {}) {
                     if (!body.projectName || !body.projectDir) {
                         return badRequest('projectName and projectDir are required');
                     }
+                    const projectDir = resolvePath(body.projectDir);
+                    if (!isGitRepo(projectDir)) {
+                        return badRequest(`${projectDir} is not a git repository (or does not exist).`);
+                    }
                     const name = body.name || body.projectName;
                     const id = `web:${slugify(name)}-${Date.now().toString(36)}`;
                     const patch = {
                         name,
                         projectName: body.projectName,
-                        projectDir: body.projectDir,
+                        projectDir,
                         provider: body.provider || 'claude',
                     };
                     if (body.baseBranch) patch.baseBranch = body.baseBranch;
@@ -170,8 +197,13 @@ function startWebServer(context, { port } = {}) {
                     if (req.method === 'PATCH') {
                         const body = await req.json().catch(() => ({}));
                         const patch = {};
-                        for (const key of ['name', 'projectName', 'projectDir', 'provider', 'baseBranch']) {
+                        for (const key of ['name', 'projectName', 'provider', 'baseBranch']) {
                             if (body[key] != null) patch[key] = body[key];
+                        }
+                        if (body.projectDir != null) {
+                            const dir = resolvePath(body.projectDir);
+                            if (!isGitRepo(dir)) return badRequest(`${dir} is not a git repository (or does not exist).`);
+                            patch.projectDir = dir;
                         }
                         if (typeof body.broadcastDiscord === 'boolean') {
                             patch.broadcastDiscord = body.broadcastDiscord;
@@ -215,6 +247,46 @@ function startWebServer(context, { port } = {}) {
                     if (req.method === 'DELETE') {
                         memory.wipeMemory(wt);
                         return json({ ok: true });
+                    }
+                }
+
+                // Rules repo config + pull (system prompt + skills), mirrors !repo.
+                if (sub === '/repo/config' && req.method === 'POST') {
+                    const body = await req.json().catch(() => ({}));
+                    const repo = normalizeRepoSlug(body.repo || '');
+                    if (!repo) return badRequest('Use owner/repo or a GitHub URL.');
+                    channelStore.updateChannel(workspaceId, { rulesRepo: repo });
+                    return json({ ok: true, rulesRepo: repo, warnNoPat: !config.GITHUB_PAT });
+                }
+                if (sub === '/repo/pull' && req.method === 'POST') {
+                    const repo = channelStore.loadChannelConfig()[workspaceId]?.rulesRepo;
+                    if (!repo) return badRequest('No rules repo set. Configure one first.');
+                    const body = await req.json().catch(() => ({}));
+                    const relPath = (body.path || '').replace(/^\/+|\/+$/g, '');
+                    try {
+                        const result = await context.rulesRepo.pull({
+                            channelId: workspaceId,
+                            channelName: ws.name,
+                            repo,
+                            relPath,
+                            wantPrompt: !!body.prompt,
+                            wantSkill: !!body.skill,
+                        });
+                        return json({ ok: true, ref: result.ref, results: result.results });
+                    } catch (e) {
+                        return badRequest(`Failed to pull from ${repo}: ${e.message}`);
+                    }
+                }
+
+                // Provision the worktree + scaffolding (.out, git excludes, skills dirs).
+                if (sub === '/worktree/setup' && req.method === 'POST') {
+                    if (!ws.projectDir) return badRequest('workspace has no project');
+                    try {
+                        const baseBranch = worktrees.getBaseBranch(workspaceId);
+                        const worktreePath = worktrees.ensureWorktree(ws.name, baseBranch, workspaceId);
+                        return json({ ok: true, worktreePath, baseBranch });
+                    } catch (e) {
+                        return badRequest(e.message);
                     }
                 }
 
