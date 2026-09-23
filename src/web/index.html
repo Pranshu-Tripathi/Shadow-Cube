@@ -530,6 +530,11 @@ async function ensureStream() {
   return voice.stream;
 }
 
+// Release the mic so its indicator turns off when we're not actively capturing.
+function releaseStream() {
+  if (voice.stream) { voice.stream.getTracks().forEach((t) => t.stop()); voice.stream = null; }
+}
+
 async function transcribeBlob(blob, mime) {
   const res = await fetch(`/api/workspaces/${encodeURIComponent(state.activeWs.id)}/transcribe?ext=${extFor(mime)}`,
     { method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: blob });
@@ -548,6 +553,7 @@ async function pttStart() {
     voice.recorder.onstop = async () => {
       const blob = new Blob(voice.chunks, { type: voice.recorder.mimeType });
       $('#mic-btn').classList.remove('rec');
+      releaseStream();   // push-to-talk is one-shot — free the mic immediately
       if (blob.size < 1200) { setVoiceStatus(''); return; }
       setVoiceStatus('transcribing…');
       const { text, error } = await transcribeBlob(blob, voice.recorder.mimeType);
@@ -626,7 +632,7 @@ function stopCall() {
   if (voice.recorder && voice.recorder.state !== 'inactive') { voice.recorder.onstop = null; try { voice.recorder.stop(); } catch {} }
   voice.recorder = null;
   if (voice.ac) { voice.ac.close().catch(() => {}); voice.ac = null; }
-  if (voice.stream) { voice.stream.getTracks().forEach((t) => t.stop()); voice.stream = null; }
+  releaseStream();
   setVoiceStatus('');
 }
 function toggleCall() { voice.callMode ? stopCall() : startCall(); }
