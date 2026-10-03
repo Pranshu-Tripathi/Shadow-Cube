@@ -617,6 +617,11 @@ function handleFrame(f) {
     if (f.convId === state.activeConv) renderTranscript();
     return;
   }
+  if (f.type === 'conversation.updated') {
+    state.convMeta[f.convId] = { ...(state.convMeta[f.convId] || {}), name: f.title };
+    if (f.convId === state.activeConv) renderTabs();
+    return;
+  }
   if (f.type === 'question.resolved') {
     delete state.pendingQuestion[f.convId];
     if (f.convId === state.activeConv) renderTranscript();

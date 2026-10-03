@@ -16,7 +16,7 @@ const { createFanoutSink } = require('../transport/fanoutSink');
 const { createDiscordSink } = require('../transport/sink');
 
 function createWebBridge(context, hub, conversationStore) {
-    const { channelStore, worktrees, agentRouter, activeProcesses, claudeStdio, client, config, questionCoordinator, questionFlow } = context;
+    const { channelStore, worktrees, agentRouter, activeProcesses, claudeStdio, client, config, questionCoordinator, questionFlow, titleService } = context;
 
     function cfgFor(workspaceId) {
         return channelStore.loadChannelConfig()[workspaceId] || {};
@@ -162,6 +162,25 @@ function createWebBridge(context, hub, conversationStore) {
         }
     }
 
+    async function titleConversation(workspaceId, convId, prompt, { source = 'web', thread = null } = {}) {
+        return titleService.ensure({
+            workspaceId,
+            conversationId: convId,
+            prompt,
+            source,
+            rename: async (title) => {
+                let target = thread;
+                if (!target) {
+                    const cfg = cfgFor(workspaceId);
+                    const threadId = cfg.mirrorThreads?.[convId] || (/^\d+$/.test(convId) ? convId : null);
+                    if (threadId) target = await fetchChannel(threadId);
+                }
+                if (target && typeof target.setName === 'function') await target.setName(title);
+            },
+            onUpdate: (title) => hub.broadcast({ type: 'conversation.updated', workspaceId, convId, title }),
+        });
+    }
+
     // Web-originated dispatch (also used for inbound from bound mirror threads).
     async function dispatch(workspaceId, convId, prompt, { provider, mirrorUser = true } = {}) {
         if (!worktrees.getProjectConfig(workspaceId)) {
@@ -169,6 +188,7 @@ function createWebBridge(context, hub, conversationStore) {
         }
         echoUser(workspaceId, convId, prompt);
         if (mirrorUser) await mirrorWebPrompt(workspaceId, convId, prompt);
+        titleConversation(workspaceId, convId, prompt).catch(() => {});
 
         const existing = activeProcesses.get(convId);
         if (existing && existing.stdin && !existing.stdin.destroyed) {
@@ -262,6 +282,7 @@ function createWebBridge(context, hub, conversationStore) {
         listConversations,
         fetchHistory,
         getWorkspaceName,
+        titleConversation,
     };
 }
 

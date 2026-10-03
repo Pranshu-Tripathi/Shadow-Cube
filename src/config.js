@@ -38,6 +38,8 @@ const VOICE_CLEANUP_MODEL = process.env.VOICE_CLEANUP_MODEL != null
     : 'gemma3:1b';
 const VOICE_CLEANUP_KEEP_ALIVE = process.env.VOICE_CLEANUP_KEEP_ALIVE || '30m';
 const OLLAMA_HOST = process.env.OLLAMA_HOST || 'http://127.0.0.1:11434';
+const TITLE_MODEL = process.env.TITLE_MODEL != null ? process.env.TITLE_MODEL : VOICE_CLEANUP_MODEL;
+const TITLE_TIMEOUT_MS = Number(process.env.TITLE_TIMEOUT_MS || 8000);
 
 function ensureDir(dir) {
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -100,4 +102,6 @@ module.exports = {
     VOICE_CLEANUP_MODEL,
     VOICE_CLEANUP_KEEP_ALIVE,
     OLLAMA_HOST,
+    TITLE_MODEL,
+    TITLE_TIMEOUT_MS,
 };

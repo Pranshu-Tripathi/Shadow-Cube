@@ -21,6 +21,8 @@ const { createQuestionCoordinator } = require('./interactions/questionCoordinato
 const { createProjectStore } = require('./stores/projectStore');
 const { createWorkspaceLifecycleService } = require('./git/workspaceLifecycleService');
 const { createBootstrapService } = require('./git/bootstrapService');
+const { createOllamaClient } = require('./local/ollamaClient');
+const { createTitleService } = require('./conversations/titleService');
 
 function createBot() {
     // Discord is optional: the local web interface (port 8200) is the home base and
@@ -77,7 +79,9 @@ function createBot() {
     // so the whisper model is warmed and used once, not per-transport.
     const transcriber = createTranscriber({ config });
     const vocabulary = createVocabulary({ config });
-    const cleanup = createCleanup({ config });
+    const ollamaClient = createOllamaClient({ host: config.OLLAMA_HOST });
+    const cleanup = createCleanup({ config, ollamaClient });
+    const titleService = createTitleService({ config, ollamaClient });
     const workspaceLifecycle = createWorkspaceLifecycleService({
         config,
         worktrees,
@@ -105,6 +109,7 @@ function createBot() {
         transcriber,
         vocabulary,
         cleanup,
+        titleService,
         workspaceLifecycle,
     };
     const commandRegistry = createCommandRegistry(context);

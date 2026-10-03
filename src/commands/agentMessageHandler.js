@@ -56,6 +56,18 @@ async function execute({ message, cleanPrompt, context, thread = null }) {
     }
 
     await message.react('⚙️');
+    const workspaceId = context.channelHelpers.getParentChannelId(targetChannel);
+    if (context.webBridge) {
+        context.webBridge.titleConversation(workspaceId, targetChannel.id, cleanPrompt, { source: 'discord', thread: targetChannel.raw || targetChannel }).catch(() => {});
+    } else if (context.titleService) {
+        context.titleService.ensure({
+            workspaceId,
+            conversationId: targetChannel.id,
+            prompt: cleanPrompt,
+            source: 'discord',
+            rename: (title) => typeof targetChannel.setName === 'function' ? targetChannel.setName(title) : undefined,
+        }).catch(() => {});
+    }
     context.agentRouter.runAgent(cleanPrompt, buildSink(targetChannel));
 }
 
