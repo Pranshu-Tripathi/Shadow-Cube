@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, jsonBody } from './api';
 import type { Approval, Conversation, Message, Project, Provider, Question, Workspace } from './types';
 import { Sidebar } from './components/Sidebar';
+import { ConversationSidebar } from './components/ConversationSidebar';
 import { MessageList } from './components/MessageList';
 import { Composer } from './components/Composer';
 import { NewWorkspaceDialog } from './components/NewWorkspaceDialog';
@@ -93,7 +94,7 @@ export default function App() {
   };
 
   const selectWorkspace = async (workspaceId: string) => {
-    setActiveWorkspaceId(workspaceId); setSettingsOpen(false); setError('');
+    setActiveWorkspaceId(workspaceId); setConversations([]); setActiveConversationId(null); setSettingsOpen(false); setError('');
     try {
       const result = await api<{ conversations: Conversation[] }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/conversations`);
       setConversations(result.conversations);
@@ -136,6 +137,7 @@ export default function App() {
 
   return <div className="app-shell">
     <Sidebar projects={projects} workspaces={workspaces} activeId={activeWorkspaceId} connected={connected} onSelect={(id) => void selectWorkspace(id)} onNew={() => setNewWorkspaceOpen(true)} />
+    <ConversationSidebar workspace={activeWorkspace} conversations={conversations} activeId={activeConversationId} onSelect={(id) => activeWorkspace && void openConversation(activeWorkspace.id, id)} onNew={() => void createConversation()} />
     <main className="main-panel">
       {!activeWorkspace ? <div className="app-empty"><div className="empty-cube">◆</div><h1>Choose a workspace</h1><p>Select an existing workspace or create a new one.</p></div> : <>
         <header className="workspace-header">
@@ -146,7 +148,6 @@ export default function App() {
             <button onClick={() => setSettingsOpen(true)}>Settings</button>
           </div>
         </header>
-        <div className="conversation-tabs"><div className="tab-scroll">{conversations.map((conversation, index) => <button className={conversation.id === activeConversationId ? 'active' : ''} key={conversation.id} onClick={() => void openConversation(activeWorkspace.id, conversation.id)}>{conversation.name || `Chat ${index + 1}`}{conversation.source === 'discord' && <span className="tiny-badge">D</span>}</button>)}</div><button className="new-chat" onClick={() => void createConversation()}>＋</button></div>
         {error && <div className="global-error">{error}<button onClick={() => setError('')}>×</button></div>}
         <MessageList messages={activeConversationId ? messages[activeConversationId] || [] : []} questions={activeConversationId ? questions[activeConversationId] : undefined} approval={activeConversationId ? approvals[activeConversationId] : undefined} onAnswer={answer} onApprove={approve} />
         <Composer workspaceId={activeWorkspace.id} disabled={!activeConversationId} voiceEnabled={voiceEnabled} onSend={async (text) => { try { setError(''); await send(text); } catch (reason) { setError(reason instanceof Error ? reason.message : 'Message failed.'); throw reason; } }} />
