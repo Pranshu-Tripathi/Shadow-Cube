@@ -19,6 +19,7 @@ const { createVocabulary } = require('./voice/vocabulary');
 const { createCleanup } = require('./voice/cleanup');
 const { createQuestionCoordinator } = require('./interactions/questionCoordinator');
 const { createProjectStore } = require('./stores/projectStore');
+const { createWorkspaceLifecycleService } = require('./git/workspaceLifecycleService');
 
 function createBot() {
     // Discord is optional: the local web interface (port 8200) is the home base and
@@ -73,6 +74,14 @@ function createBot() {
     const transcriber = createTranscriber({ config });
     const vocabulary = createVocabulary({ config });
     const cleanup = createCleanup({ config });
+    const workspaceLifecycle = createWorkspaceLifecycleService({
+        config,
+        worktrees,
+        activeProcesses,
+        sessionStore,
+        clearCodexSession,
+        questionCoordinator,
+    });
 
     const context = {
         config,
@@ -92,6 +101,7 @@ function createBot() {
         transcriber,
         vocabulary,
         cleanup,
+        workspaceLifecycle,
     };
     const commandRegistry = createCommandRegistry(context);
 

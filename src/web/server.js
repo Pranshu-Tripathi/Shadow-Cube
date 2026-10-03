@@ -96,7 +96,7 @@ function startWebServer(context, { port } = {}) {
     // can mirror Discord conversations onto the web and route inbound mirror messages.
     context.webBridge = bridge;
 
-    const { channelStore, projectStore, worktrees, memory, activeProcesses, claudeStdio, sessionStore, client } = context;
+    const { channelStore, projectStore, worktrees, memory, activeProcesses, claudeStdio, sessionStore, client, workspaceLifecycle } = context;
 
     function getWorkspace(id) {
         const channels = channelStore.loadChannelConfig();
@@ -152,15 +152,9 @@ function startWebServer(context, { port } = {}) {
     }
 
     function clearConversation(workspaceId, convId) {
-        const child = activeProcesses.get(convId);
-        if (child) {
-            try { child.kill('SIGTERM'); } catch {}
-            activeProcesses.delete(convId);
-        }
-        sessionStore.clearSession(convId);
+        const result = workspaceLifecycle.resetSession(convId);
         hub.clearConversation(convId);
-        conversationStore.clearHistory(workspaceId, convId);
-        return { ok: true };
+        return { ok: true, ...result };
     }
 
     const server = Bun.serve({
@@ -333,6 +327,32 @@ function startWebServer(context, { port } = {}) {
                         return json({ ok: true, worktreePath, baseBranch });
                     } catch (e) {
                         return badRequest(e.message);
+                    }
+                }
+
+                const actionMatch = sub.match(/^\/actions\/(preview|reset|remove-worktree|destroy)$/);
+                if (actionMatch) {
+                    const action = actionMatch[1];
+                    if (action === 'preview' && req.method === 'GET') {
+                        return json(workspaceLifecycle.preview({ workspaceId, workspaceName: ws.name }));
+                    }
+                    if (req.method === 'POST') {
+                        const body = await req.json().catch(() => ({}));
+                        if (action === 'reset') {
+                            const result = workspaceLifecycle.resetSession(body.conversationId);
+                            if (body.conversationId) hub.clearConversation(body.conversationId);
+                            return json({ ok: true, ...result });
+                        }
+                        const options = {
+                            workspaceId,
+                            workspaceName: ws.name,
+                            conversationId: body.conversationId,
+                            confirmPath: body.confirmPath,
+                        };
+                        const result = action === 'destroy'
+                            ? workspaceLifecycle.destroy(options)
+                            : workspaceLifecycle.removeWorktree(options);
+                        return json(result, { status: result.confirmationRequired ? 409 : 200 });
                     }
                 }
 

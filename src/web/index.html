@@ -955,9 +955,8 @@ function changeProvider(e) {
 }
 
 async function clearConv() {
-  if (!confirm('Clear this conversation and stop any running agent?')) return;
+  if (!confirm('Reset this agent session? Message history will be kept.')) return;
   await api(`/api/workspaces/${encodeURIComponent(state.activeWs.id)}/conversations/${state.activeConv}/clear`, { method: 'POST' });
-  state.messages[state.activeConv] = [];
   delete state.pendingQuestion[state.activeConv];
   delete state.pendingApproval[state.activeConv];
   renderTranscript();
@@ -1187,6 +1186,12 @@ async function settingsModal() {
       <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="s-prompt" style="width:auto" checked /> system prompt (&lt;path&gt;/system.md)</label>
       <label style="display:flex;gap:6px;align-items:center;font-size:13px;margin-top:6px"><input type="checkbox" id="s-skill" style="width:auto" checked /> skills (&lt;path&gt;/skills/**)</label>
       <div class="actions" style="justify-content:flex-start"><button class="primary" id="s-pull">Pull from repo</button></div>
+      <div style="font-size:12px;color:var(--muted);margin:18px 0 6px">DANGER ZONE</div>
+      <div class="actions" style="justify-content:flex-start">
+        <button id="s-reset">Reset session</button>
+        <button id="s-remove-worktree">Reset + remove worktree</button>
+        <button id="s-destroy">Destroy worktree</button>
+      </div>
       <div id="s-result" style="font-size:12px;color:var(--muted);margin-top:8px;white-space:pre-wrap"></div>
     </div>
     <div class="actions"><button onclick="closeModal()">Close</button></div>`);
@@ -1219,6 +1224,22 @@ async function settingsModal() {
     }) });
     setResult(res.error ? ('❌ ' + res.error) : `✅ Pull from ${state.activeWs.rulesRepo || 'repo'} (ref ${res.ref}):\n${res.results.join('\n')}`);
   };
+  const lifecycleAction = async (action, label) => {
+    const preview = await api(`/api/workspaces/${encodeURIComponent(ws.id)}/actions/preview`);
+    let warning = `${label}?`;
+    if (preview.worktreePath) warning += `\n\n${preview.worktreePath}`;
+    if (preview.dirtyFiles) warning += `\n\nWarning: ${preview.dirtyFiles} uncommitted file(s) will be discarded.`;
+    if (!confirm(warning)) return;
+    const res = await api(`/api/workspaces/${encodeURIComponent(ws.id)}/actions/${action}`, {
+      method: 'POST', body: JSON.stringify({ conversationId: state.activeConv, confirmPath: preview.worktreePath }),
+    });
+    setResult(res.confirmationRequired ? 'Confirmation was required.' : res.removed === false && action !== 'reset' ? 'Worktree was already absent.' : `✅ ${label} complete.`);
+    delete state.pendingQuestion[state.activeConv];
+    delete state.pendingApproval[state.activeConv];
+  };
+  $('#s-reset').onclick = () => lifecycleAction('reset', 'Reset session');
+  $('#s-remove-worktree').onclick = () => lifecycleAction('remove-worktree', 'Reset and remove worktree');
+  $('#s-destroy').onclick = () => lifecycleAction('destroy', 'Destroy worktree');
 }
 
 /* ---------- Wire up ---------- */
