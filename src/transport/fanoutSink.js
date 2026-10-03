@@ -32,7 +32,15 @@ function createFanoutSink({ primary, mirrors = [], getMirrors }) {
         isThread: primary.isThread,
         send,
         // Interactive prompts stay on the primary (web) surface.
-        askQuestion: primary.askQuestion ? (...args) => primary.askQuestion(...args) : undefined,
+        askQuestion: async (...args) => {
+            if (primary.askQuestion) await Promise.resolve(primary.askQuestion(...args));
+            const activeMirrors = getMirrors
+                ? await Promise.resolve(getMirrors()).catch(() => [])
+                : mirrors;
+            await Promise.all(activeMirrors.map((mirror) => (
+                mirror.askQuestion ? Promise.resolve(mirror.askQuestion(...args)).catch(() => {}) : null
+            )));
+        },
         requestApproval: primary.requestApproval ? (...args) => primary.requestApproval(...args) : undefined,
     };
 }

@@ -616,6 +616,11 @@ function handleFrame(f) {
     if (f.convId === state.activeConv) renderTranscript();
     return;
   }
+  if (f.type === 'question.resolved') {
+    delete state.pendingQuestion[f.convId];
+    if (f.convId === state.activeConv) renderTranscript();
+    return;
+  }
   if (f.type === 'approval') {
     state.pendingApproval[f.convId] = f;
     if (f.convId === state.activeConv) renderTranscript();

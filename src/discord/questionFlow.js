@@ -1,6 +1,6 @@
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder } = require('discord.js');
 
-function createQuestionFlow({ activeProcesses, writeStdin }) {
+function createQuestionFlow({ activeProcesses, writeStdin, coordinator }) {
     const pendingQuestions = new Map();
     let interactionCounter = 0;
 
@@ -67,7 +67,7 @@ function createQuestionFlow({ activeProcesses, writeStdin }) {
         return lines.join('\n');
     }
 
-    async function handleAskUserQuestion(targetChannel, child, requestId, toolUseId, input) {
+    async function handleAskUserQuestion(targetChannel, child, requestId, toolUseId, input, { conversationId } = {}) {
         const threadId = targetChannel.id;
         const rawQuestions = Array.isArray(input.questions) ? input.questions : [];
         const questions = rawQuestions.map(q => ({
@@ -89,6 +89,12 @@ function createQuestionFlow({ activeProcesses, writeStdin }) {
             return;
         }
 
+        const canonicalId = conversationId || threadId;
+        if (coordinator) {
+            coordinator.create({ conversationId: canonicalId, child, requestId, toolUseId, input });
+            coordinator.addAlias(canonicalId, threadId);
+        }
+
         const token = nextInteractionToken();
         const pending = {
             toolUseId,
@@ -100,6 +106,7 @@ function createQuestionFlow({ activeProcesses, writeStdin }) {
             awaitingCustomFor: null,
             messages: [],
             token,
+            conversationId: canonicalId,
         };
         pendingQuestions.set(threadId, pending);
 
@@ -133,27 +140,27 @@ function createQuestionFlow({ activeProcesses, writeStdin }) {
             return;
         }
 
-        const child = activeProcesses.get(threadId);
-        pendingQuestions.delete(threadId);
-        if (!child) {
+        const child = activeProcesses.get(pending.conversationId) || activeProcesses.get(threadId);
+        if (!child && !coordinator?.get(pending.conversationId)) {
+            pendingQuestions.delete(threadId);
             await targetChannel.send('*(Answers collected, but the Claude process is no longer running.)*').catch(() => {});
             return;
         }
-        const ok = writeStdin(child, {
-            type: 'control_response',
-            response: {
-                subtype: 'success',
-                request_id: pending.requestId,
+
+        const result = coordinator
+            ? coordinator.resolve(pending.conversationId, pending.answers)
+            : { ok: writeStdin(child, {
+                type: 'control_response',
                 response: {
-                    behavior: 'allow',
-                    updatedInput: {
-                        questions: pending.originalInput.questions,
-                        answers: pending.answers,
+                    subtype: 'success',
+                    request_id: pending.requestId,
+                    response: {
+                        behavior: 'allow',
+                        updatedInput: { questions: pending.originalInput.questions, answers: pending.answers },
                     },
                 },
-            },
-        });
-        if (!ok) {
+            }) };
+        if (!result.ok) {
             await targetChannel.send('*(Failed to send answers — Claude stdin closed.)*').catch(() => {});
         }
     }
@@ -251,7 +258,22 @@ function createQuestionFlow({ activeProcesses, writeStdin }) {
         const pending = pendingQuestions.get(threadId);
         if (!pending) return;
         pendingQuestions.delete(threadId);
+        coordinator?.clear(pending.conversationId, summary);
         await disableQuestionComponents(pending, summary);
+    }
+
+    if (coordinator) {
+        coordinator.subscribe(({ type, record, answers, summary }) => {
+            if (type !== 'resolved' && type !== 'cleared') return;
+            for (const [threadId, pending] of pendingQuestions) {
+                if (pending.conversationId !== record.conversationId) continue;
+                pendingQuestions.delete(threadId);
+                const answerText = answers
+                    ? Object.values(answers).flat().filter(Boolean).join(', ')
+                    : '';
+                disableQuestionComponents(pending, summary || (answerText ? `Answered: ${answerText}` : 'Answered.'));
+            }
+        });
     }
 
     return {

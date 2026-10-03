@@ -36,7 +36,7 @@ function classify(content) {
     return { kind: 'text' };
 }
 
-function createWebSink({ hub, workspaceId, workspaceName, convId }) {
+function createWebSink({ hub, workspaceId, workspaceName, convId, questionCoordinator }) {
     // Returns a Promise (like discord.js's channel.send) so the runners can both
     // `await send()` for a handle and `send().catch()` fire-and-forget. The resolved
     // handle exposes .edit() for live updates.
@@ -73,14 +73,11 @@ function createWebSink({ hub, workspaceId, workspaceName, convId }) {
             options: Array.isArray(q.options) ? q.options : [],
         }));
 
-        hub.pendingQuestions.set(convId, {
-            child,
-            requestId,
-            toolUseId,
-            originalInput: input,
-            questions,
-            answers: {},
-        });
+        if (questionCoordinator) {
+            questionCoordinator.create({ conversationId: convId, child, requestId, toolUseId, input });
+        } else {
+            hub.pendingQuestions.set(convId, { child, requestId, toolUseId, originalInput: input, questions, answers: {} });
+        }
 
         hub.broadcast({
             type: 'question',

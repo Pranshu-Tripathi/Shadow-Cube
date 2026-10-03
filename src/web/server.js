@@ -105,6 +105,9 @@ function startWebServer(context, { port } = {}) {
     // Resolve an AskUserQuestion the browser answered, writing the control_response
     // back into the agent's stdin (same shape questionFlow uses for Discord).
     function answerQuestion(convId, answers) {
+        if (context.questionCoordinator) {
+            return context.questionCoordinator.resolve(convId, answers || {});
+        }
         const pending = hub.pendingQuestions.get(convId);
         if (!pending) return { error: 'no pending question' };
         hub.pendingQuestions.delete(convId);
@@ -125,6 +128,16 @@ function startWebServer(context, { port } = {}) {
         });
         return ok ? { ok: true } : { error: 'agent stdin closed' };
     }
+
+    context.questionCoordinator?.subscribe(({ type, record, answers, summary }) => {
+        if (type !== 'resolved' && type !== 'cleared') return;
+        hub.broadcast({
+            type: 'question.resolved',
+            convId: record.conversationId,
+            answers: answers || null,
+            summary: summary || null,
+        });
+    });
 
     function answerApproval(convId, decision) {
         const pending = hub.pendingApprovals.get(convId);

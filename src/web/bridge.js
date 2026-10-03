@@ -16,7 +16,7 @@ const { createFanoutSink } = require('../transport/fanoutSink');
 const { createDiscordSink } = require('../transport/sink');
 
 function createWebBridge(context, hub, conversationStore) {
-    const { channelStore, worktrees, agentRouter, activeProcesses, claudeStdio, client, config } = context;
+    const { channelStore, worktrees, agentRouter, activeProcesses, claudeStdio, client, config, questionCoordinator, questionFlow } = context;
 
     function cfgFor(workspaceId) {
         return channelStore.loadChannelConfig()[workspaceId] || {};
@@ -126,13 +126,19 @@ function createWebBridge(context, hub, conversationStore) {
         const mirrors = [];
         const asThread = /^\d+$/.test(convId) ? await fetchChannel(convId) : null;
         if (asThread && typeof asThread.isThread === 'function' && asThread.isThread()) {
-            mirrors.push(createDiscordSink(asThread));
+            const sink = createDiscordSink(asThread);
+            sink.askQuestion = (...args) => questionFlow.handleAskUserQuestion(asThread, ...args, { conversationId: convId });
+            mirrors.push(sink);
         } else if (cfgFor(workspaceId).broadcastDiscord && client && config.DISCORD_TOKEN) {
             const thread = await ensureMirrorThread(workspaceId, convId, threadName).catch((error) => {
                 console.error('[DEBUG] failed to resolve Discord mirror thread:', error.message);
                 return null;
             });
-            if (thread) mirrors.push(createDiscordSink(thread));
+            if (thread) {
+                const sink = createDiscordSink(thread);
+                sink.askQuestion = (...args) => questionFlow.handleAskUserQuestion(thread, ...args, { conversationId: convId });
+                mirrors.push(sink);
+            }
         }
         return mirrors;
     }
@@ -140,7 +146,7 @@ function createWebBridge(context, hub, conversationStore) {
     // Build the sink for a web-originated run. It always remains broadcast-aware so
     // changing the toggle does not require clearing or restarting the agent session.
     function buildWebSink(workspaceId, convId, firstPrompt) {
-        const primary = createWebSink({ hub, workspaceId, workspaceName: getWorkspaceName(workspaceId), convId });
+        const primary = createWebSink({ hub, workspaceId, workspaceName: getWorkspaceName(workspaceId), convId, questionCoordinator });
         return createFanoutSink({
             primary,
             getMirrors: () => resolveWebMirrors(workspaceId, convId, firstPrompt),
@@ -192,8 +198,12 @@ function createWebBridge(context, hub, conversationStore) {
     function mirrorDiscordSink(discordSink) {
         const convId = discordSink.id;
         const workspaceId = discordSink.parentId;
-        const web = createWebSink({ hub, workspaceId, workspaceName: getWorkspaceName(workspaceId), convId });
-        return createFanoutSink({ primary: discordSink, mirrors: [web] });
+        const web = createWebSink({ hub, workspaceId, workspaceName: getWorkspaceName(workspaceId), convId, questionCoordinator });
+        const primary = { ...discordSink };
+        if (discordSink.raw) {
+            primary.askQuestion = (...args) => questionFlow.handleAskUserQuestion(discordSink.raw, ...args, { conversationId: convId });
+        }
+        return createFanoutSink({ primary, mirrors: [web] });
     }
 
     // List a workspace's conversations for the notebook sidebar: web-created bound

@@ -39,4 +39,13 @@ describe('dynamic fanout sink', () => {
         expect(mirrorMessages.map((message) => message.payload)).toEqual(['both']);
         expect(mirrorMessages[0].edits).toEqual(['both updated']);
     });
+
+    test('presents interactive questions on both primary and mirror surfaces', async () => {
+        const seen = [];
+        const primary = { ...recordingSink('web', []), askQuestion: () => seen.push('web') };
+        const mirror = { ...recordingSink('discord', []), askQuestion: () => seen.push('discord') };
+        const sink = createFanoutSink({ primary, mirrors: [mirror] });
+        await sink.askQuestion({}, 'request', 'tool', { questions: [] });
+        expect(seen).toEqual(['web', 'discord']);
+    });
 });
