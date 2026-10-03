@@ -96,7 +96,7 @@ function startWebServer(context, { port } = {}) {
     // can mirror Discord conversations onto the web and route inbound mirror messages.
     context.webBridge = bridge;
 
-    const { channelStore, projectStore, worktrees, memory, activeProcesses, claudeStdio, sessionStore, client, workspaceLifecycle } = context;
+    const { channelStore, projectStore, bootstrap, worktrees, memory, activeProcesses, claudeStdio, sessionStore, client, workspaceLifecycle } = context;
 
     function getWorkspace(id) {
         const channels = channelStore.loadChannelConfig();
@@ -181,6 +181,17 @@ function startWebServer(context, { port } = {}) {
 
             if (path === '/api/projects' && req.method === 'GET') {
                 return json({ projects: projectStore.list(), projectsRoot: projectStore.projectsRoot });
+            }
+            const projectMatch = path.match(/^\/api\/projects\/([^/]+)$/);
+            if (projectMatch && req.method === 'PATCH') {
+                const projectId = decodeURIComponent(projectMatch[1]);
+                const body = await req.json().catch(() => ({}));
+                try {
+                    const project = projectStore.setBootstrapCommands(projectId, body.bootstrapCommands);
+                    return json({ project });
+                } catch (error) {
+                    return badRequest(error.message);
+                }
             }
 
             // --- Workspaces collection ---
@@ -327,6 +338,16 @@ function startWebServer(context, { port } = {}) {
                         return json({ ok: true, worktreePath, baseBranch });
                     } catch (e) {
                         return badRequest(e.message);
+                    }
+                }
+                if (sub === '/worktree/bootstrap' && req.method === 'POST') {
+                    if (!ws.projectDir) return badRequest('workspace has no project');
+                    try {
+                        const info = worktrees.getWorktreeInfo(ws.name, workspaceId);
+                        if (!require('fs').existsSync(info.worktreePath)) return badRequest('Set up the worktree first.');
+                        return json(bootstrap.run({ workspaceId, worktreePath: info.worktreePath, force: true }));
+                    } catch (error) {
+                        return badRequest(error.message);
                     }
                 }
 

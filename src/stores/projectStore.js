@@ -34,7 +34,7 @@ function createProjectStore({ db = getDatabase(), projectsRoot } = {}) {
     function list({ refresh = true } = {}) {
         if (refresh) discover();
         return db.query(`
-            SELECT p.id, p.name, p.path,
+            SELECT p.id, p.name, p.path, p.bootstrap_commands,
                    COUNT(w.id) AS workspace_count
             FROM projects p
             LEFT JOIN workspaces w ON w.project_id = p.id
@@ -46,12 +46,18 @@ function createProjectStore({ db = getDatabase(), projectsRoot } = {}) {
             path: project.path || null,
             workspaceCount: Number(project.workspace_count),
             configured: !!project.path,
+            bootstrapCommands: JSON.parse(project.bootstrap_commands || '[]'),
         }));
     }
 
     function get(projectId) {
-        const project = db.query('SELECT id, name, path FROM projects WHERE id = ?').get(projectId);
-        return project ? { id: project.id, name: project.name, path: project.path || null } : null;
+        const project = db.query('SELECT id, name, path, bootstrap_commands FROM projects WHERE id = ?').get(projectId);
+        return project ? {
+            id: project.id,
+            name: project.name,
+            path: project.path || null,
+            bootstrapCommands: JSON.parse(project.bootstrap_commands || '[]'),
+        } : null;
     }
 
     function assignWorkspace(workspaceId, projectId) {
@@ -74,7 +80,18 @@ function createProjectStore({ db = getDatabase(), projectsRoot } = {}) {
         return project;
     }
 
-    return { discover, list, get, assignWorkspace, projectsRoot };
+    function setBootstrapCommands(projectId, commands) {
+        if (!Array.isArray(commands)) throw new Error('bootstrapCommands must be an array.');
+        const cleaned = commands.map((command) => String(command).trim()).filter(Boolean);
+        if (cleaned.length > 20) throw new Error('A maximum of 20 bootstrap commands is allowed.');
+        if (cleaned.some((command) => command.length > 2000)) throw new Error('Bootstrap commands must be 2,000 characters or fewer.');
+        const result = db.query('UPDATE projects SET bootstrap_commands = ?, updated_at = ? WHERE id = ?')
+            .run(JSON.stringify(cleaned), Date.now(), projectId);
+        if (!result.changes) throw new Error('Unknown project.');
+        return get(projectId);
+    }
+
+    return { discover, list, get, assignWorkspace, setBootstrapCommands, projectsRoot };
 }
 
 module.exports = { createProjectStore, isGitRepository };

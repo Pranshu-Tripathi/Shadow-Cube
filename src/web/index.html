@@ -1179,6 +1179,10 @@ async function settingsModal() {
       <div class="field"><label>Default provider</label><select id="s-provider"><option value="claude">claude</option><option value="codex">codex</option></select></div>
       <div class="actions" style="justify-content:flex-start"><button class="primary" id="s-save">Save project</button><button id="s-worktree">Set up worktree (.out, skills)</button></div>
 
+      <div style="font-size:12px;color:var(--muted);margin:18px 0 6px">INITIAL WORKTREE COMMANDS</div>
+      <div class="field"><label>One command per line; runs once after a new worktree is created</label><textarea id="s-bootstrap" placeholder="bun install&#10;bun run prepare"></textarea></div>
+      <div class="actions" style="justify-content:flex-start"><button id="s-bootstrap-save">Save commands</button><button id="s-bootstrap-run">Run setup again</button></div>
+
       <div style="font-size:12px;color:var(--muted);margin:18px 0 6px">RULES REPO ${ws.hasSystemPrompt ? '· <span style="color:var(--accent2)">system prompt set</span>' : ''}</div>
       <div class="field"><label>Repo (owner/repo or URL)</label><input id="s-repo" value="${esc(ws.rulesRepo || '')}" placeholder="pranshu-sdgr/Prompt-Manager" /></div>
       <div class="actions" style="justify-content:flex-start"><button id="s-repo-save">Save repo</button></div>
@@ -1196,6 +1200,8 @@ async function settingsModal() {
     </div>
     <div class="actions"><button onclick="closeModal()">Close</button></div>`);
   $('#s-provider').value = ws.provider || 'claude';
+  const project = state.projects.find(p => p.id === ws.projectId);
+  $('#s-bootstrap').value = (project?.bootstrapCommands || []).join('\n');
 
   const setResult = (t) => { $('#s-result').textContent = t; };
   $('#s-save').onclick = async () => {
@@ -1212,6 +1218,21 @@ async function settingsModal() {
     setResult('Setting up worktree…');
     const res = await api(`/api/workspaces/${encodeURIComponent(ws.id)}/worktree/setup`, { method: 'POST' });
     setResult(res.error ? ('❌ ' + res.error) : `✅ Worktree ready at ${res.worktreePath} (base ${res.baseBranch})`);
+  };
+  $('#s-bootstrap-save').onclick = async () => {
+    if (!ws.projectId || ws.projectId === 'global') { setResult('❌ Select a configured project first.'); return; }
+    const bootstrapCommands = $('#s-bootstrap').value.split('\n').map(v => v.trim()).filter(Boolean);
+    const res = await api(`/api/projects/${encodeURIComponent(ws.projectId)}`, { method: 'PATCH', body: JSON.stringify({ bootstrapCommands }) });
+    if (res.error) { setResult('❌ ' + res.error); return; }
+    const existing = state.projects.findIndex(p => p.id === ws.projectId);
+    if (existing >= 0) state.projects[existing] = { ...state.projects[existing], ...res.project };
+    setResult('✅ Initial commands saved. They will run after new worktrees are created.');
+  };
+  $('#s-bootstrap-run').onclick = async () => {
+    if (!confirm('Run the configured setup commands in this worktree now?')) return;
+    setResult('Running setup commands…');
+    const res = await api(`/api/workspaces/${encodeURIComponent(ws.id)}/worktree/bootstrap`, { method: 'POST', body: '{}' });
+    setResult(res.error ? ('❌ ' + res.error) : `${res.status === 'success' ? '✅' : '❌'} Setup ${res.status}.\n${res.output || ''}`);
   };
   $('#s-repo-save').onclick = async () => {
     const res = await api(`/api/workspaces/${encodeURIComponent(ws.id)}/repo/config`, { method: 'POST', body: JSON.stringify({ repo: $('#s-repo').value.trim() }) });

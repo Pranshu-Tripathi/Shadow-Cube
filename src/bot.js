@@ -20,6 +20,7 @@ const { createCleanup } = require('./voice/cleanup');
 const { createQuestionCoordinator } = require('./interactions/questionCoordinator');
 const { createProjectStore } = require('./stores/projectStore');
 const { createWorkspaceLifecycleService } = require('./git/workspaceLifecycleService');
+const { createBootstrapService } = require('./git/bootstrapService');
 
 function createBot() {
     // Discord is optional: the local web interface (port 8200) is the home base and
@@ -38,6 +39,8 @@ function createBot() {
     const questionCoordinator = createQuestionCoordinator({ writeStdin: claudeStdio.writeStdin });
     const worktrees = createWorktreeService({ config, channelStore });
     const projectStore = createProjectStore({ projectsRoot: config.PROJECTS_ROOT });
+    const bootstrap = createBootstrapService();
+    worktrees.setBootstrapRunner((options) => bootstrap.run(options));
     const github = createGithubClient({ token: config.GITHUB_PAT });
     const rulesRepo = createRulesRepoService({ github, channelStore, worktrees, memory });
     const questionFlow = createQuestionFlow({
@@ -52,6 +55,7 @@ function createBot() {
         channelStore,
         worktrees,
         projectStore,
+        bootstrap,
         memory,
         formatting,
         channelHelpers,
