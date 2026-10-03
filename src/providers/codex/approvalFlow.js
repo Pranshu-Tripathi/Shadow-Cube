@@ -24,6 +24,29 @@ function createApprovalFlow({ state, appServer, formatter }) {
             return;
         }
         const token = `${state.approvalCounter++}`;
+        if (typeof channel.requestApproval === 'function') {
+            const approval = { reqId, message: null, resolved: false };
+            state.pendingApprovals.set(token, approval);
+            const options = Object.entries(DECISIONS).map(([decision, meta]) => ({
+                decision,
+                label: meta.label,
+                tone: decision === 'accept' || decision === 'acceptForSession' ? 'primary' : decision === 'cancel' ? 'danger' : 'default',
+            }));
+            try {
+                await channel.requestApproval(token, body, options, (decision) => {
+                    if (approval.resolved || !DECISIONS[decision]) return false;
+                    approval.resolved = true;
+                    state.pendingApprovals.delete(token);
+                    appServer.respond(reqId, { decision });
+                    return true;
+                });
+            } catch (e) {
+                state.pendingApprovals.delete(token);
+                console.error('[DEBUG] failed to post web approval:', e.message);
+                appServer.respond(reqId, { decision: 'decline' });
+            }
+            return;
+        }
         const rows = approvalRows(token);
         try {
             const message = await channel.send({ content: body, components: rows });

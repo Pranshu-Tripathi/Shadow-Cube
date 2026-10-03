@@ -1,3 +1,10 @@
 const { createBot } = require('./src/bot');
+const { startWebServer } = require('./src/web/server');
 
-createBot().start();
+const bot = createBot();
+
+if (bot.context.config.WEB_ENABLED) {
+  startWebServer(bot.context);
+}
+
+bot.start();

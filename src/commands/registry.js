@@ -39,6 +39,9 @@ function createCommandRegistry(context) {
         worktrees: context.worktrees,
         formatting: context.formatting,
         dispatch: dispatchTranscript,
+        transcriber: context.transcriber,
+        vocabulary: context.vocabulary,
+        cleanup: context.cleanup,
     });
 
     async function handleMessage(message) {
@@ -54,6 +57,12 @@ function createCommandRegistry(context) {
             if (commandMatch) {
                 return command.execute({ message, cleanPrompt, match: commandMatch, context });
             }
+        }
+
+        // Messages typed into a web-created mirror thread are routed back to that
+        // web conversation (bidirectional broadcast) instead of the default handler.
+        if (context.webBridge && await context.webBridge.handleInbound(message, cleanPrompt)) {
+            return;
         }
 
         return agentMessageHandler.execute({ message, cleanPrompt, context });
