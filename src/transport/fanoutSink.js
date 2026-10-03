@@ -3,11 +3,14 @@
 // (mirror). The primary drives all keying (session id, worktree, questions); the
 // mirrors are best-effort output copies and never block or break the primary.
 
-function createFanoutSink({ primary, mirrors = [] }) {
+function createFanoutSink({ primary, mirrors = [], getMirrors }) {
     async function send(payload) {
         const primaryHandle = await primary.send(payload);
+        const activeMirrors = getMirrors
+            ? await Promise.resolve(getMirrors()).catch(() => [])
+            : mirrors;
         const mirrorHandles = await Promise.all(
-            mirrors.map((m) => Promise.resolve(m.send(payload)).catch(() => null))
+            activeMirrors.map((m) => Promise.resolve(m.send(payload)).catch(() => null))
         );
 
         return {
@@ -30,6 +33,7 @@ function createFanoutSink({ primary, mirrors = [] }) {
         send,
         // Interactive prompts stay on the primary (web) surface.
         askQuestion: primary.askQuestion ? (...args) => primary.askQuestion(...args) : undefined,
+        requestApproval: primary.requestApproval ? (...args) => primary.requestApproval(...args) : undefined,
     };
 }
 

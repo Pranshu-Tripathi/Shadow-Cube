@@ -9,6 +9,7 @@ const { execSync } = require('child_process');
 const { createWebHub } = require('./webHub');
 const { createWebBridge } = require('./bridge');
 const { createWebVoice } = require('./voiceWeb');
+const { createWebConversationStore } = require('../stores/webConversationStore');
 const { normalizeRepoSlug } = require('../github/githubClient');
 
 // Expand ~ and resolve to an absolute path (mirrors the Discord !project command).
@@ -86,8 +87,9 @@ function listWorkspaces(context) {
 function startWebServer(context, { port } = {}) {
     const config = context.config;
     const listenPort = port || config.WEB_PORT;
-    const hub = createWebHub();
-    const bridge = createWebBridge(context, hub);
+    const conversationStore = createWebConversationStore();
+    const hub = createWebHub({ conversationStore });
+    const bridge = createWebBridge(context, hub, conversationStore);
     const webVoice = createWebVoice(context);
     // Expose the bridge so the Discord message path (agentMessageHandler / registry)
     // can mirror Discord conversations onto the web and route inbound mirror messages.
@@ -124,7 +126,18 @@ function startWebServer(context, { port } = {}) {
         return ok ? { ok: true } : { error: 'agent stdin closed' };
     }
 
-    function clearConversation(convId) {
+    function answerApproval(convId, decision) {
+        const pending = hub.pendingApprovals.get(convId);
+        if (!pending) return { error: 'no pending approval' };
+        if (!pending.options.some((option) => option.decision === decision)) return { error: 'invalid approval decision' };
+        hub.pendingApprovals.delete(convId);
+        const accepted = pending.resolve(decision);
+        if (!accepted) return { error: 'approval is no longer active' };
+        hub.broadcast({ type: 'approval.resolved', convId, token: pending.token, decision });
+        return { ok: true };
+    }
+
+    function clearConversation(workspaceId, convId) {
         const child = activeProcesses.get(convId);
         if (child) {
             try { child.kill('SIGTERM'); } catch {}
@@ -132,6 +145,7 @@ function startWebServer(context, { port } = {}) {
         }
         sessionStore.clearSession(convId);
         hub.clearConversation(convId);
+        conversationStore.clearHistory(workspaceId, convId);
         return { ok: true };
     }
 
@@ -308,17 +322,20 @@ function startWebServer(context, { port } = {}) {
                     const conversations = await bridge.listConversations(workspaceId);
                     return json({ conversations });
                 }
+                if (sub === '/conversations' && req.method === 'POST') {
+                    return json(conversationStore.createConversation(workspaceId), { status: 201 });
+                }
 
                 // Discord message history for a conversation that started on Discord.
                 const histMatch = sub.match(/^\/conversations\/([^/]+)\/history$/);
                 if (histMatch && req.method === 'GET') {
                     const convId = decodeURIComponent(histMatch[1]);
-                    const messages = await bridge.fetchHistory(convId);
+                    const messages = await bridge.fetchHistory(workspaceId, convId);
                     return json({ messages });
                 }
 
-                // Conversation actions: /conversations/:cid/(prompt|answer|clear)
-                const convMatch = sub.match(/^\/conversations\/([^/]+)\/(prompt|answer|clear)$/);
+                // Conversation actions: /conversations/:cid/(prompt|answer|approval|clear)
+                const convMatch = sub.match(/^\/conversations\/([^/]+)\/(prompt|answer|approval|clear)$/);
                 if (convMatch && req.method === 'POST') {
                     const convId = decodeURIComponent(convMatch[1]);
                     const action = convMatch[2];
@@ -333,8 +350,12 @@ function startWebServer(context, { port } = {}) {
                         const result = answerQuestion(convId, body.answers);
                         return result.error ? badRequest(result.error) : json(result);
                     }
+                    if (action === 'approval') {
+                        const result = answerApproval(convId, body.decision);
+                        return result.error ? badRequest(result.error) : json(result);
+                    }
                     if (action === 'clear') {
-                        return json(clearConversation(convId));
+                        return json(clearConversation(workspaceId, convId));
                     }
                 }
 

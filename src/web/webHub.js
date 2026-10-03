@@ -6,12 +6,14 @@
 
 const MAX_LOG_PER_CONV = 500;
 
-function createWebHub() {
+function createWebHub({ conversationStore } = {}) {
     const clients = new Set();
     // convId -> array of frames (message.create / message.update / event)
     const logs = new Map();
     // convId -> pending question { child, requestId, toolUseId, questions, answers, currentIndex }
     const pendingQuestions = new Map();
+    // convId -> pending Codex approval { token, options, resolve }
+    const pendingApprovals = new Map();
 
     let msgCounter = 0;
     function nextMsgId() {
@@ -21,6 +23,7 @@ function createWebHub() {
 
     function logFrame(frame) {
         if (!frame.convId) return;
+        conversationStore?.recordFrame(frame);
         let arr = logs.get(frame.convId);
         if (!arr) {
             arr = [];
@@ -73,11 +76,13 @@ function createWebHub() {
     function clearConversation(convId) {
         logs.delete(convId);
         pendingQuestions.delete(convId);
+        pendingApprovals.delete(convId);
     }
 
     return {
         clients,
         pendingQuestions,
+        pendingApprovals,
         nextMsgId,
         broadcast,
         addClient,

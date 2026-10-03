@@ -92,6 +92,428 @@
   #status { font-size: 12px; color: var(--muted); }
   .dot { display:inline-block; width:8px; height:8px; border-radius:50%; background: var(--danger); margin-right:5px; }
   .dot.ok { background: var(--accent2); }
+
+  /* Visual polish: quieter surfaces, tighter type, and a clearer reading column. */
+  :root {
+    --bg: #0c0e12;
+    --panel: #12151b;
+    --panel2: #181c24;
+    --border: #252a34;
+    --border-soft: #1c2028;
+    --text: #e7e9ee;
+    --muted: #848b99;
+    --accent: #86a9ff;
+    --accent-hover: #9bb8ff;
+    --accent-wash: rgba(134, 169, 255, .11);
+    --accent2: #78d99b;
+    --user: #192235;
+    --danger: #f07575;
+    color-scheme: dark;
+  }
+
+  html { background: var(--bg); }
+  body {
+    min-width: 720px;
+    height: 100dvh;
+    overflow: hidden;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 13px;
+    line-height: 1.45;
+    letter-spacing: -.006em;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  button, input, textarea, select { outline: none; }
+  button {
+    min-height: 30px;
+    border-color: transparent;
+    border-radius: 7px;
+    padding: 5px 9px;
+    background: var(--panel2);
+    color: #cdd1da;
+    font-size: 12.5px;
+    font-weight: 500;
+    transition: background-color .14s ease, border-color .14s ease, color .14s ease, transform .14s ease;
+  }
+  button:hover { background: #202631; border-color: #343b49; color: var(--text); }
+  button:active { transform: translateY(1px); }
+  button:disabled { cursor: not-allowed; opacity: .42; transform: none; }
+  button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(134, 169, 255, .12);
+  }
+  button.primary {
+    background: var(--accent);
+    color: #0d1423;
+    border-color: transparent;
+    font-weight: 650;
+  }
+  button.primary:hover { background: var(--accent-hover); border-color: transparent; }
+
+  input, textarea, select {
+    border-color: var(--border);
+    border-radius: 7px;
+    padding: 7px 9px;
+    background: #151922;
+    font-size: 13px;
+    transition: border-color .14s ease, box-shadow .14s ease, background-color .14s ease;
+  }
+  input:hover, textarea:hover, select:hover { border-color: #343a46; }
+  input:focus, textarea:focus, select:focus { background: #171b24; }
+  textarea { min-height: 52px; }
+
+  /* Sidebar */
+  #sidebar {
+    width: 248px;
+    background: #11141a;
+    border-right-color: var(--border-soft);
+  }
+  #sidebar header {
+    min-height: 58px;
+    padding: 12px 14px 11px;
+    border-bottom-color: var(--border-soft);
+    font-size: 14px;
+    font-weight: 650;
+    letter-spacing: -.01em;
+  }
+  #sidebar header small { margin-top: 2px; font-size: 10.5px; line-height: 1.2; }
+  #new-ws-btn { margin: 10px 12px 8px; min-height: 32px; }
+  #ws-list { padding: 2px 7px 12px; scrollbar-width: thin; scrollbar-color: #3a404b transparent; }
+  .ws-item {
+    margin: 1px 0;
+    padding: 8px 9px;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    transition: background-color .12s ease, border-color .12s ease;
+  }
+  .ws-item:hover { background: #171b22; }
+  .ws-item.active {
+    background: var(--accent-wash);
+    border-color: rgba(134, 169, 255, .18);
+    box-shadow: none;
+  }
+  .ws-item .name {
+    overflow: hidden;
+    color: #d9dce3;
+    font-size: 12.5px;
+    font-weight: 560;
+    line-height: 1.3;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ws-item.active .name { color: #f0f2f6; }
+  .ws-item .meta {
+    overflow: hidden;
+    margin-top: 2px;
+    color: #737b89;
+    font-size: 10.5px;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    margin-left: 5px;
+    padding: 1px 5px;
+    border: 1px solid #2d323c;
+    background: #20242c;
+    color: #989fab;
+    font-size: 8.5px;
+    font-weight: 650;
+    line-height: 1.35;
+    vertical-align: 1px;
+  }
+  .badge.on { border-color: rgba(120, 217, 155, .25); background: rgba(120, 217, 155, .13); color: #8de0aa; }
+
+  /* Workspace header and navigation */
+  #topbar {
+    min-height: 54px;
+    padding: 8px 14px;
+    gap: 8px;
+    border-bottom-color: var(--border-soft);
+    background: rgba(18, 21, 27, .96);
+  }
+  #topbar .title {
+    max-width: 190px;
+    overflow: hidden;
+    color: #eef0f4;
+    font-size: 14px;
+    font-weight: 650;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  #ws-project {
+    max-width: min(34vw, 440px);
+    overflow: hidden;
+    color: #707886 !important;
+    font-size: 11px !important;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  #topbar label { font-size: 11px !important; white-space: nowrap; }
+  #topbar select { min-height: 28px; padding: 3px 25px 3px 7px !important; font-size: 11.5px; }
+  #settings-btn, #memory-btn { min-height: 29px; }
+  .discord-toggle {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    flex: 0 0 30px;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    background: var(--panel2);
+    color: #69717f !important;
+    cursor: pointer;
+    transition: background-color .14s ease, border-color .14s ease, color .14s ease;
+  }
+  .discord-toggle:hover { border-color: #343b49; background: #202631; color: #9ca4b2 !important; }
+  .discord-toggle:has(input:checked) {
+    border-color: rgba(134, 145, 255, .36);
+    background: rgba(88, 101, 242, .18);
+    color: #aeb6ff !important;
+  }
+  .discord-toggle:has(input:disabled) { cursor: wait; opacity: .55; }
+  .discord-toggle input {
+    position: absolute;
+    inset: 0;
+    width: 100% !important;
+    height: 100%;
+    margin: 0;
+    opacity: 0;
+    cursor: pointer;
+  }
+  .discord-toggle:has(input:focus-visible) {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(134, 169, 255, .12);
+  }
+  .discord-icon { display: inline-flex; width: 17px; height: 17px; }
+  .discord-icon svg { display: block; width: 100%; height: 100%; fill: currentColor; }
+
+  #tabs {
+    min-height: 39px;
+    gap: 2px;
+    padding: 6px 12px 5px;
+    border-bottom-color: var(--border-soft);
+    background: #101319;
+    scrollbar-width: none;
+  }
+  #tabs::-webkit-scrollbar { display: none; }
+  .tab {
+    min-height: 27px;
+    padding: 4px 10px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+    color: #7f8795;
+    font-size: 11.5px;
+  }
+  .tab:hover { background: #181c24; border-color: transparent; color: #cbd0d9; }
+  .tab.active {
+    border-color: rgba(134, 169, 255, .2);
+    background: var(--accent-wash);
+    color: #cbd9ff;
+    font-weight: 600;
+  }
+
+  /* Conversation */
+  #transcript {
+    padding: 22px clamp(22px, 5vw, 72px) 28px;
+    background: var(--bg);
+    scrollbar-width: thin;
+    scrollbar-color: #343944 transparent;
+  }
+  .msg, details.tool, details.think, .question { width: min(100%, 780px); margin-right: auto; margin-left: auto; }
+  .msg { margin-bottom: 15px; }
+  .msg .who {
+    margin: 0 0 4px 2px;
+    color: #697180;
+    font-size: 9.5px;
+    font-weight: 650;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+  .msg .body {
+    border-color: var(--border-soft);
+    border-radius: 9px;
+    padding: 10px 12px;
+    background: #12151b;
+    color: #d7dae1;
+    font-size: 13px;
+    line-height: 1.55;
+    box-shadow: 0 1px 1px rgba(0, 0, 0, .12);
+  }
+  .msg.user .body { border-color: rgba(134, 169, 255, .14); background: var(--user); color: #e1e6f1; }
+  .msg.cost { margin-top: -7px; margin-bottom: 10px; }
+  .msg.cost .body { color: #69717f; font-size: 10.5px; }
+
+  .md p { margin: 5px 0; }
+  .md h1, .md h2, .md h3 { margin: 13px 0 6px; color: #eef0f4; letter-spacing: -.015em; }
+  .md h1 { font-size: 1.2em; } .md h2 { font-size: 1.1em; } .md h3 { font-size: 1em; }
+  .md ul, .md ol { margin: 6px 0; padding-left: 20px; }
+  .md li { margin: 3px 0; }
+  .md blockquote { border-left-color: #3b4351; color: #9aa1ad; }
+  .md code.inline { border-color: #2b303a; background: #1a1e26; color: #dce4f8; font-size: 11.5px; }
+  pre.code { border-color: #242934; border-radius: 7px; background: #090b0f; }
+  pre.code .lang { padding: 4px 9px; border-bottom-color: #20242c; font-size: 9px; }
+  pre.code code { padding: 9px; font-size: 11.5px; line-height: 1.5; }
+
+  details.tool, details.think {
+    margin-bottom: 10px;
+    border-color: var(--border-soft);
+    border-radius: 8px;
+    background: #101319;
+  }
+  details.think { border-style: solid; background: transparent; }
+  details > summary { min-height: 32px; padding: 6px 10px; font-size: 11.5px; }
+  details.tool > summary { color: #94b0f7; }
+  details.think > summary { color: #737b89; }
+  .tool-body, .think-body { padding: 2px 10px 9px; }
+  .question { padding: 12px; border-color: rgba(134, 169, 255, .3); border-radius: 9px; background: #121722; }
+  .question .opts button { min-width: 92px; }
+  .approval .opts { margin-top: 11px; }
+  .approval .opts button.danger { color: #ef9a9a; }
+  .approval .opts button.danger:hover { border-color: rgba(240, 117, 117, .3); background: rgba(240, 117, 117, .1); }
+
+  #empty {
+    color: #606876;
+    font-size: 12.5px;
+  }
+
+  /* Composer */
+  #voice-status {
+    height: 17px;
+    padding: 0 clamp(22px, 5vw, 72px);
+    background: var(--bg);
+    font-size: 10.5px;
+  }
+  #composer {
+    align-items: stretch;
+    gap: 7px;
+    padding: 9px clamp(14px, 4vw, 58px) 12px;
+    border-top-color: var(--border-soft);
+    background: #101319;
+  }
+  #composer textarea {
+    min-height: 72px;
+    max-height: 180px;
+    border-color: #292e39;
+    border-radius: 9px;
+    padding: 10px 11px;
+    background: #151922;
+    font-size: 12.5px;
+    line-height: 1.45;
+  }
+  #composer textarea::placeholder { color: #626a78; }
+  #composer > div { min-width: 72px; }
+  #composer #send-btn { margin-top: auto; }
+  #mic-btn, #call-btn { flex: 1; padding-right: 6px; padding-left: 6px; }
+  #clear-btn { background: transparent; color: #737b89; }
+  #clear-btn:hover { background: rgba(240, 117, 117, .08); color: #ee8a8a; }
+
+  /* Dialogs */
+  #overlay { padding: 20px; background: rgba(3, 5, 8, .72); backdrop-filter: blur(4px); }
+  .modal {
+    width: 420px;
+    max-height: calc(100dvh - 40px);
+    overflow-y: auto;
+    border-color: #2a303b;
+    border-radius: 11px;
+    padding: 17px;
+    background: #13171e;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, .38);
+  }
+  .modal h3 { margin: 0 0 15px; font-size: 15px; font-weight: 650; }
+  .field { margin-bottom: 10px; }
+  .field label { margin-bottom: 4px; font-size: 10.5px; }
+  .modal .actions { margin-top: 13px; }
+  #status { font-size: 10.5px; }
+  .dot { width: 6px; height: 6px; margin-right: 5px; box-shadow: 0 0 0 2px rgba(240, 117, 117, .1); }
+  .dot.ok { box-shadow: 0 0 0 2px rgba(120, 217, 155, .1); }
+
+  @media (max-width: 980px) {
+    #sidebar { width: 218px; }
+    #ws-project { display: none; }
+    #topbar { gap: 6px; }
+    #topbar .title { max-width: 145px; }
+    #topbar label { font-size: 0 !important; gap: 4px !important; }
+    #topbar label select { font-size: 11.5px; }
+    #transcript { padding-right: 24px; padding-left: 24px; }
+  }
+
+  /* Keep conversations visible in a dedicated rail instead of a crowded tab row. */
+  #workspace-view {
+    grid-template-areas:
+      "topbar topbar"
+      "transcript chats"
+      "voice chats"
+      "composer chats";
+    grid-template-columns: minmax(0, 1fr) clamp(184px, 18vw, 224px);
+    grid-template-rows: auto minmax(0, 1fr) auto auto;
+  }
+  #topbar { grid-area: topbar; }
+  #transcript { grid-area: transcript; min-height: 0; }
+  #voice-status { grid-area: voice; }
+  #composer { grid-area: composer; min-width: 0; }
+  #tabs {
+    grid-area: chats;
+    min-width: 0;
+    min-height: 0;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 3px;
+    padding: 12px 9px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    border-bottom: 0;
+    border-left: 1px solid var(--border-soft);
+    background: #101319;
+    scrollbar-width: thin;
+    scrollbar-color: #343944 transparent;
+  }
+  #tabs::before {
+    content: "Chats";
+    order: -2;
+    padding: 1px 6px 7px;
+    color: #6f7785;
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+  }
+  #tabs .tab {
+    width: 100%;
+    min-height: 31px;
+    overflow: hidden;
+    padding: 6px 8px;
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  #tabs .tab:last-child {
+    order: -1;
+    margin-bottom: 7px;
+    border: 1px dashed #303642;
+    background: transparent;
+    color: #929aa8;
+    text-align: center;
+  }
+  #tabs .tab:last-child:hover {
+    border-color: rgba(134, 169, 255, .4);
+    background: var(--accent-wash);
+    color: #cbd9ff;
+  }
+  #tabs .tab:last-child:disabled {
+    border-color: #292e38;
+    background: transparent;
+    color: #6d7480;
+  }
+
+  @media (max-width: 980px) {
+    #workspace-view { grid-template-columns: minmax(0, 1fr) 184px; }
+  }
 </style>
 </head>
 <body>
@@ -103,7 +525,7 @@
 
   <main id="main">
     <div id="empty">Select or create a workspace to begin.</div>
-    <div id="workspace-view" style="display:none; flex-direction:column; flex:1; min-height:0;">
+    <div id="workspace-view" style="display:none; flex:1; min-height:0;">
       <div id="topbar">
         <span class="title" id="ws-title"></span>
         <span id="ws-project" style="color:var(--muted); font-size:13px;"></span>
@@ -115,10 +537,15 @@
             <option value="codex">codex</option>
           </select>
         </label>
-        <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:var(--muted);">
-          <input type="checkbox" id="broadcast-toggle" style="width:auto;" /> Broadcast to Discord
+        <label class="discord-toggle" title="Broadcast to Discord">
+          <input type="checkbox" id="broadcast-toggle" aria-label="Broadcast to Discord" />
+          <span class="discord-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" role="img">
+              <path d="M7.1 6.7A11.8 11.8 0 0 1 12 5.6c1.7 0 3.4.4 4.9 1.1a13 13 0 0 1 2.2 6.2 9.4 9.4 0 0 1-3.5 3.1l-.9-1.2c.6-.2 1.2-.6 1.7-1a10 10 0 0 1-8.8 0c.5.4 1.1.8 1.7 1L8.4 16a9.4 9.4 0 0 1-3.5-3.1 13 13 0 0 1 2.2-6.2Zm2.1 4.9c.7 0 1.2-.6 1.2-1.3S9.9 9 9.2 9 8 9.6 8 10.3s.5 1.3 1.2 1.3Zm5.6 0c.7 0 1.2-.6 1.2-1.3S15.5 9 14.8 9s-1.2.6-1.2 1.3.5 1.3 1.2 1.3Z"/>
+            </svg>
+          </span>
         </label>
-        <button id="settings-btn">⚙️ Settings</button>
+        <button id="settings-btn">Settings</button>
         <button id="memory-btn">Memory</button>
       </div>
       <div id="tabs"></div>
@@ -156,10 +583,12 @@ const state = {
   // convId -> [{msgId, role, content, type}]
   messages: {},
   pendingQuestion: {}, // convId -> questions
+  pendingApproval: {}, // convId -> approval frame
   // convId -> provider (thread-dependent choice)
   providers: JSON.parse(localStorage.getItem('sc.providers') || '{}'),
   // convId -> { name, source }  (source: 'discord' | 'web')
   convMeta: {},
+  broadcastUpdate: null,
   ws: null,
 };
 
@@ -187,12 +616,24 @@ function handleFrame(f) {
     if (f.convId === state.activeConv) renderTranscript();
     return;
   }
+  if (f.type === 'approval') {
+    state.pendingApproval[f.convId] = f;
+    if (f.convId === state.activeConv) renderTranscript();
+    return;
+  }
+  if (f.type === 'approval.resolved') {
+    delete state.pendingApproval[f.convId];
+    if (f.convId === state.activeConv) renderTranscript();
+    return;
+  }
   const list = state.messages[f.convId] || (state.messages[f.convId] = []);
   if (f.type === 'message.update') {
     const m = list.find(x => x.msgId === f.msgId);
     if (m) m.content = f.content; else list.push(f);
   } else if (f.type === 'message.create') {
-    list.push(f);
+    if (!list.some(x => x.msgId === f.msgId)) list.push(f);
+    if (state.convMeta[f.convId]) state.convMeta[f.convId].hasMessages = true;
+    if (f.convId === state.activeConv) renderTabs();
   } else { return; }
   if (f.convId === state.activeConv) renderTranscript();
 }
@@ -225,8 +666,25 @@ async function selectWorkspace(id) {
   let server = [];
   try { server = (await api(`/api/workspaces/${encodeURIComponent(id)}/conversations`)).conversations || []; } catch {}
   const ids = [];
-  server.forEach(c => { ids.push(c.id); state.convMeta[c.id] = { name: c.name, source: c.source }; });
-  (state.convs[id] || []).forEach(cid => { if (!ids.includes(cid)) ids.push(cid); });
+  server.forEach(c => {
+    ids.push(c.id);
+    state.convMeta[c.id] = { name: c.name, source: c.source, hasMessages: c.hasMessages };
+  });
+  (state.convs[id] || []).forEach(cid => {
+    if (!ids.includes(cid)) ids.push(cid);
+    if (!state.convMeta[cid]) {
+      state.convMeta[cid] = { name: null, source: 'web', hasMessages: (state.messages[cid] || []).length > 0 };
+    }
+  });
+  if (ids.length === 0) {
+    try {
+      const { conversation } = await api(`/api/workspaces/${encodeURIComponent(id)}/conversations`, { method: 'POST', body: '{}' });
+      if (conversation) {
+        ids.push(conversation.id);
+        state.convMeta[conversation.id] = { name: conversation.name, source: 'web', hasMessages: false };
+      }
+    } catch {}
+  }
   if (ids.length === 0) ids.push('conv-' + Math.random().toString(36).slice(2, 9));
   state.convs[id] = ids; saveConvs();
   state.activeConv = ids[0];
@@ -241,20 +699,20 @@ function subscribe(convId) {
 // Subscribe to a conversation and, for Discord-originated ones with no loaded
 // messages yet, pull recent Discord history so there's context to read.
 async function openConv(convId) {
-  subscribe(convId);
   const meta = state.convMeta[convId];
-  if (meta?.source === 'discord' && (!state.messages[convId] || state.messages[convId].length === 0)) {
+  if (!state.messages[convId] || state.messages[convId].length === 0) {
     try {
-      const { messages } = await api(`/api/workspaces/${encodeURIComponent(state.activeWs.id)}/conversations/${convId}/history`);
+      const { messages } = await api(`/api/workspaces/${encodeURIComponent(state.activeWs.id)}/conversations/${encodeURIComponent(convId)}/history`);
       if (messages && messages.length) state.messages[convId] = messages;
     } catch {}
   }
+  subscribe(convId);
 }
 
 function renderWorkspace() {
   const ws = state.activeWs;
   $('#empty').style.display = 'none';
-  $('#workspace-view').style.display = 'flex';
+  $('#workspace-view').style.display = 'grid';
   $('#ws-title').textContent = ws.name;
   $('#ws-project').textContent = ws.projectDir ? ('— ' + ws.projectDir) : '— (no project set)';
   $('#broadcast-toggle').checked = ws.broadcastDiscord;
@@ -276,11 +734,21 @@ function renderTabs() {
     el.appendChild(b);
   });
   const add = document.createElement('button');
-  add.className = 'tab'; add.textContent = '+';
-  add.onclick = () => {
-    const cid = 'conv-' + Math.random().toString(36).slice(2, 9);
-    state.convs[state.activeWs.id].push(cid); saveConvs();
-    state.activeConv = cid; subscribe(cid); renderTabs(); renderTranscript();
+  add.className = 'tab'; add.textContent = '+ New chat';
+  const hasUnusedChat = list.some((cid) => state.convMeta[cid]?.source === 'web' && state.convMeta[cid]?.hasMessages === false);
+  add.disabled = hasUnusedChat;
+  if (hasUnusedChat) add.title = 'Use the empty chat before creating another.';
+  add.onclick = async () => {
+    const result = await api(`/api/workspaces/${encodeURIComponent(state.activeWs.id)}/conversations`, { method: 'POST', body: '{}' });
+    if (result.error || !result.conversation) { alert(result.error || 'Could not create chat.'); return; }
+    const conversation = result.conversation;
+    if (!state.convs[state.activeWs.id].includes(conversation.id)) state.convs[state.activeWs.id].push(conversation.id);
+    state.convMeta[conversation.id] = { name: conversation.name, source: 'web', hasMessages: conversation.hasMessages };
+    saveConvs();
+    state.activeConv = conversation.id;
+    await openConv(conversation.id);
+    renderTabs();
+    renderTranscript();
   };
   el.appendChild(add);
   $('#provider-select').value = providerFor(state.activeConv);
@@ -335,6 +803,8 @@ function renderTranscript() {
   });
   const q = state.pendingQuestion[state.activeConv];
   if (q) el.appendChild(renderQuestion(q));
+  const approval = state.pendingApproval[state.activeConv];
+  if (approval) el.appendChild(renderApproval(approval));
   el.scrollTop = el.scrollHeight;
 }
 
@@ -431,13 +901,44 @@ function renderQuestion(questions) {
   return wrap;
 }
 
+function renderApproval(approval) {
+  const box = document.createElement('div');
+  box.className = 'question approval';
+  box.innerHTML = `<h4>Approval required</h4><div class="md">${md(approval.content)}</div>`;
+  const opts = document.createElement('div');
+  opts.className = 'opts';
+  (approval.options || []).forEach((option) => {
+    const b = document.createElement('button');
+    b.textContent = option.label;
+    if (option.tone === 'primary') b.classList.add('primary');
+    if (option.tone === 'danger') b.classList.add('danger');
+    b.onclick = async () => {
+      [...opts.children].forEach((button) => { button.disabled = true; });
+      const result = await api(`/api/workspaces/${encodeURIComponent(state.activeWs.id)}/conversations/${state.activeConv}/approval`,
+        { method: 'POST', body: JSON.stringify({ decision: option.decision }) });
+      if (result.error) {
+        [...opts.children].forEach((button) => { button.disabled = false; });
+        alert(result.error);
+        return;
+      }
+      delete state.pendingApproval[state.activeConv];
+      renderTranscript();
+    };
+    opts.appendChild(b);
+  });
+  box.appendChild(opts);
+  return box;
+}
+
 /* ---------- Actions ---------- */
 async function sendPrompt() {
   const text = $('#prompt').value.trim();
   if (!text || !state.activeWs) return;
+  if (state.broadcastUpdate) await state.broadcastUpdate;
   $('#prompt').value = '';
-  await api(`/api/workspaces/${encodeURIComponent(state.activeWs.id)}/conversations/${state.activeConv}/prompt`,
+  const result = await api(`/api/workspaces/${encodeURIComponent(state.activeWs.id)}/conversations/${state.activeConv}/prompt`,
     { method: 'POST', body: JSON.stringify({ prompt: text, provider: providerFor(state.activeConv) }) });
+  if (result.error) { $('#prompt').value = text; alert(result.error); }
 }
 
 function changeProvider(e) {
@@ -451,13 +952,21 @@ async function clearConv() {
   await api(`/api/workspaces/${encodeURIComponent(state.activeWs.id)}/conversations/${state.activeConv}/clear`, { method: 'POST' });
   state.messages[state.activeConv] = [];
   delete state.pendingQuestion[state.activeConv];
+  delete state.pendingApproval[state.activeConv];
   renderTranscript();
 }
 
 async function toggleBroadcast(e) {
+  const input = e.target;
   const on = e.target.checked;
-  const res = await api(`/api/workspaces/${encodeURIComponent(state.activeWs.id)}`, { method: 'PATCH', body: JSON.stringify({ broadcastDiscord: on }) });
-  if (res.error) { alert(res.error); e.target.checked = !on; return; }
+  input.disabled = true;
+  const request = api(`/api/workspaces/${encodeURIComponent(state.activeWs.id)}`, { method: 'PATCH', body: JSON.stringify({ broadcastDiscord: on }) })
+    .catch((error) => ({ error: error.message || 'Could not update Discord broadcasting.' }));
+  state.broadcastUpdate = request;
+  const res = await request;
+  if (state.broadcastUpdate === request) state.broadcastUpdate = null;
+  input.disabled = false;
+  if (res.error) { alert(res.error); input.checked = !on; return; }
   state.activeWs = res.workspace;
   const idx = state.workspaces.findIndex(w => w.id === state.activeWs.id);
   if (idx >= 0) state.workspaces[idx] = res.workspace;

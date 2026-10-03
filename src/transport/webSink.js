@@ -91,6 +91,22 @@ function createWebSink({ hub, workspaceId, workspaceName, convId }) {
         });
     }
 
+    // Codex approvals cannot use Discord component buttons in the browser. Publish a
+    // native web frame and keep a resolver for the REST approval endpoint instead.
+    function requestApproval(token, content, options, resolve) {
+        hub.pendingApprovals.set(convId, { token, options, resolve });
+        hub.broadcast({
+            type: 'approval',
+            workspaceId,
+            convId,
+            msgId: hub.nextMsgId(),
+            token,
+            content,
+            options,
+        });
+        return Promise.resolve();
+    }
+
     return {
         __sinkKind: 'web',
         id: convId,
@@ -99,6 +115,7 @@ function createWebSink({ hub, workspaceId, workspaceName, convId }) {
         isThread: () => true,
         send,
         askQuestion,
+        requestApproval,
     };
 }
 

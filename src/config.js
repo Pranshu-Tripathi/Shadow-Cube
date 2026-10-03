@@ -15,6 +15,7 @@ const WEB_ENABLED = process.env.WEB_ENABLED !== '0' && process.env.WEB_ENABLED !
 
 const SESSIONS_DIR = path.join(ROOT_DIR, 'sessions');
 const SESSIONS_CONFIG_PATH = path.join(SESSIONS_DIR, 'config.json');
+const WEB_CONVERSATIONS_PATH = path.join(SESSIONS_DIR, 'web-conversations.json');
 const CONFIG_DIR = path.join(ROOT_DIR, 'config');
 const CHANNEL_CONFIG_PATH = path.join(CONFIG_DIR, 'channels.json');
 const WORKTREES_ROOT = process.env.WORKTREES_DIR || '/Users/tripathi/Desktop/development/code/worktrees';
@@ -80,6 +81,7 @@ module.exports = {
     DISCORD_GUILD_ID,
     SESSIONS_DIR,
     SESSIONS_CONFIG_PATH,
+    WEB_CONVERSATIONS_PATH,
     CONFIG_DIR,
     CHANNEL_CONFIG_PATH,
     WORKTREES_ROOT,

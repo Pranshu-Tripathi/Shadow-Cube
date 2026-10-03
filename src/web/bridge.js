@@ -15,7 +15,7 @@ const { createWebSink } = require('../transport/webSink');
 const { createFanoutSink } = require('../transport/fanoutSink');
 const { createDiscordSink } = require('../transport/sink');
 
-function createWebBridge(context, hub) {
+function createWebBridge(context, hub, conversationStore) {
     const { channelStore, worktrees, agentRouter, activeProcesses, claudeStdio, client, config } = context;
 
     function cfgFor(workspaceId) {
@@ -120,30 +120,49 @@ function createWebBridge(context, hub) {
         return null;
     }
 
-    // Build the sink for a web-originated run: web primary, plus a Discord mirror when
-    // broadcasting or when the conversation already lives in a real Discord thread.
-    async function buildWebSink(workspaceId, convId, firstPrompt) {
-        const primary = createWebSink({ hub, workspaceId, workspaceName: getWorkspaceName(workspaceId), convId });
+    // Resolve mirrors at send time, not only when the agent starts. This makes the
+    // broadcast toggle take effect immediately for already-running conversations.
+    async function resolveWebMirrors(workspaceId, convId, threadName) {
         const mirrors = [];
-        const cfg = cfgFor(workspaceId);
-
-        // Conversation is itself a Discord thread (Discord-native workspace) — post there.
-        const asThread = await fetchChannel(convId);
+        const asThread = /^\d+$/.test(convId) ? await fetchChannel(convId) : null;
         if (asThread && typeof asThread.isThread === 'function' && asThread.isThread()) {
             mirrors.push(createDiscordSink(asThread));
-        } else if (cfg.broadcastDiscord && client && config.DISCORD_TOKEN) {
-            const thread = await ensureMirrorThread(workspaceId, convId, firstPrompt).catch(() => null);
+        } else if (cfgFor(workspaceId).broadcastDiscord && client && config.DISCORD_TOKEN) {
+            const thread = await ensureMirrorThread(workspaceId, convId, threadName).catch((error) => {
+                console.error('[DEBUG] failed to resolve Discord mirror thread:', error.message);
+                return null;
+            });
             if (thread) mirrors.push(createDiscordSink(thread));
         }
-        return mirrors.length ? createFanoutSink({ primary, mirrors }) : primary;
+        return mirrors;
+    }
+
+    // Build the sink for a web-originated run. It always remains broadcast-aware so
+    // changing the toggle does not require clearing or restarting the agent session.
+    function buildWebSink(workspaceId, convId, firstPrompt) {
+        const primary = createWebSink({ hub, workspaceId, workspaceName: getWorkspaceName(workspaceId), convId });
+        return createFanoutSink({
+            primary,
+            getMirrors: () => resolveWebMirrors(workspaceId, convId, firstPrompt),
+        });
+    }
+
+    async function mirrorWebPrompt(workspaceId, convId, prompt) {
+        const mirrors = await resolveWebMirrors(workspaceId, convId, prompt);
+        if (!mirrors.length) return;
+        const chunks = context.formatting.splitForDiscord(`**You (web):**\n${prompt}`);
+        for (const mirror of mirrors) {
+            for (const chunk of chunks) await Promise.resolve(mirror.send(chunk)).catch(() => {});
+        }
     }
 
     // Web-originated dispatch (also used for inbound from bound mirror threads).
-    async function dispatch(workspaceId, convId, prompt, { provider } = {}) {
+    async function dispatch(workspaceId, convId, prompt, { provider, mirrorUser = true } = {}) {
         if (!worktrees.getProjectConfig(workspaceId)) {
             return { error: 'No project set for this workspace.' };
         }
         echoUser(workspaceId, convId, prompt);
+        if (mirrorUser) await mirrorWebPrompt(workspaceId, convId, prompt);
 
         const existing = activeProcesses.get(convId);
         if (existing && existing.stdin && !existing.stdin.destroyed) {
@@ -152,7 +171,7 @@ function createWebBridge(context, hub) {
         }
         activeProcesses.delete(convId);
 
-        const sink = await buildWebSink(workspaceId, convId, prompt);
+        const sink = buildWebSink(workspaceId, convId, prompt);
         agentRouter.runAgent(prompt, sink, { provider });
         return { ok: true, piped: false };
     }
@@ -164,7 +183,7 @@ function createWebBridge(context, hub) {
         if (!found) return false;
         if (!cleanPrompt) return true;
         const provider = cfgFor(found.workspaceId).provider;
-        await dispatch(found.workspaceId, found.convId, cleanPrompt, { provider });
+        await dispatch(found.workspaceId, found.convId, cleanPrompt, { provider, mirrorUser: false });
         await message.react('⚙️').catch(() => {});
         return true;
     }
@@ -183,8 +202,17 @@ function createWebBridge(context, hub) {
         const cfg = cfgFor(workspaceId);
         const out = [];
         const seen = new Set();
-        const push = (id, name, source) => { if (!seen.has(id)) { seen.add(id); out.push({ id, name: name || null, source }); } };
+        const push = (id, name, source, hasMessages) => {
+            if (seen.has(id)) return;
+            seen.add(id);
+            const conversation = { id, name: name || null, source };
+            if (typeof hasMessages === 'boolean') conversation.hasMessages = hasMessages;
+            out.push(conversation);
+        };
 
+        for (const conversation of conversationStore.listConversations(workspaceId)) {
+            push(conversation.id, conversation.name, conversation.source, conversation.hasMessages);
+        }
         for (const convId of Object.keys(cfg.mirrorThreads || {})) push(convId, null, 'web');
 
         if (!workspaceId.startsWith('web:') && client) {
@@ -201,7 +229,9 @@ function createWebBridge(context, hub) {
 
     // Fetch recent Discord message history for a thread so the notebook can show
     // context for a conversation that started on Discord.
-    async function fetchHistory(convId, limit = 30) {
+    async function fetchHistory(workspaceId, convId, limit = 30) {
+        const persisted = conversationStore.getHistory(workspaceId, convId);
+        if (persisted) return persisted;
         const thread = await fetchChannel(convId);
         if (!thread || typeof thread.messages?.fetch !== 'function') return [];
         const msgs = await thread.messages.fetch({ limit }).catch(() => null);
