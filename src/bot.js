@@ -18,6 +18,7 @@ const { createTranscriber } = require('./voice/transcriber');
 const { createVocabulary } = require('./voice/vocabulary');
 const { createCleanup } = require('./voice/cleanup');
 const { createQuestionCoordinator } = require('./interactions/questionCoordinator');
+const { createProjectStore } = require('./stores/projectStore');
 
 function createBot() {
     // Discord is optional: the local web interface (port 8200) is the home base and
@@ -35,6 +36,7 @@ function createBot() {
     const activeProcesses = new Map();
     const questionCoordinator = createQuestionCoordinator({ writeStdin: claudeStdio.writeStdin });
     const worktrees = createWorktreeService({ config, channelStore });
+    const projectStore = createProjectStore({ projectsRoot: config.PROJECTS_ROOT });
     const github = createGithubClient({ token: config.GITHUB_PAT });
     const rulesRepo = createRulesRepoService({ github, channelStore, worktrees, memory });
     const questionFlow = createQuestionFlow({
@@ -48,6 +50,7 @@ function createBot() {
         sessionStore,
         channelStore,
         worktrees,
+        projectStore,
         memory,
         formatting,
         channelHelpers,

@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { Database } = require('bun:sqlite');
 const config = require('../config');
 
@@ -106,12 +107,14 @@ function initSchema(db) {
 }
 
 function upsertWorkspace(db, id, cfg, now = Date.now()) {
+    const projectId = ensureProject(db, cfg.projectName, cfg.projectDir, now);
     db.query(`
         INSERT INTO workspaces (
-            id, name, project_name, project_dir, provider, base_branch,
+            id, project_id, name, project_name, project_dir, provider, base_branch,
             broadcast_discord, discord_channel_id, config_json, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
+            project_id = excluded.project_id,
             name = excluded.name,
             project_name = excluded.project_name,
             project_dir = excluded.project_dir,
@@ -123,6 +126,7 @@ function upsertWorkspace(db, id, cfg, now = Date.now()) {
             updated_at = excluded.updated_at
     `).run(
         id,
+        projectId,
         cfg.name || null,
         cfg.projectName || null,
         cfg.projectDir || null,
@@ -134,6 +138,45 @@ function upsertWorkspace(db, id, cfg, now = Date.now()) {
         now,
         now,
     );
+}
+
+function projectIdFor(name, projectPath) {
+    if (!name || !projectPath) return 'global';
+    const key = path.resolve(projectPath);
+    const slug = String(name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32) || 'project';
+    return `project:${slug}-${crypto.createHash('sha1').update(key).digest('hex').slice(0, 10)}`;
+}
+
+function ensureProject(db, name, projectPath, now = Date.now()) {
+    if (!name || !projectPath) {
+        db.query(`
+            INSERT OR IGNORE INTO projects (id, name, path, bootstrap_commands, created_at, updated_at)
+            VALUES ('global', 'Global / no project', NULL, '[]', ?, ?)
+        `).run(now, now);
+        return 'global';
+    }
+    const resolved = path.resolve(projectPath);
+    const existing = db.query('SELECT id, name FROM projects WHERE path = ?').get(resolved);
+    if (existing) {
+        if (existing.name !== name) db.query('UPDATE projects SET name = ?, updated_at = ? WHERE id = ?').run(name, now, existing.id);
+        return existing.id;
+    }
+    const id = projectIdFor(name, resolved);
+    db.query(`
+        INSERT OR IGNORE INTO projects (id, name, path, bootstrap_commands, created_at, updated_at)
+        VALUES (?, ?, ?, '[]', ?, ?)
+    `).run(id, name, resolved, now, now);
+    return id;
+}
+
+function reconcileProjects(db) {
+    const now = Date.now();
+    const update = db.query('UPDATE workspaces SET project_id = ? WHERE id = ?');
+    db.transaction(() => {
+        for (const workspace of db.query('SELECT id, project_name, project_dir FROM workspaces').all()) {
+            update.run(ensureProject(db, workspace.project_name, workspace.project_dir, now), workspace.id);
+        }
+    })();
 }
 
 function importOnce(db, sourcePath, importer) {
@@ -226,6 +269,7 @@ function createStateDatabase({ dbPath = config.STATE_DB_PATH, importLegacy = tru
             ...legacyPaths,
         });
     }
+    reconcileProjects(db);
     return db;
 }
 
@@ -239,5 +283,8 @@ module.exports = {
     createStateDatabase,
     getDatabase,
     importLegacyState,
+    ensureProject,
+    projectIdFor,
+    reconcileProjects,
     upsertWorkspace,
 };

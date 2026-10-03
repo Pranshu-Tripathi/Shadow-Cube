@@ -5,6 +5,7 @@ const path = require('path');
 const ROOT_DIR = path.join(__dirname, '..');
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const PROJECT_DIR = process.env.PROJECT_DIR || process.cwd();
+const PROJECTS_ROOT = process.env.PROJECTS_ROOT || path.dirname(PROJECT_DIR);
 const BRANCH_PREFIX = process.env.BRANCH_PREFIX != null ? process.env.BRANCH_PREFIX : 'shadow-cube';
 const GITHUB_PAT = process.env.GITHUB_PAT;
 const WEB_PORT = Number(process.env.WEB_PORT || 8200);
@@ -75,6 +76,7 @@ module.exports = {
     ROOT_DIR,
     DISCORD_TOKEN,
     PROJECT_DIR,
+    PROJECTS_ROOT,
     BRANCH_PREFIX,
     GITHUB_PAT,
     WEB_PORT,

@@ -5,10 +5,11 @@ function emptyChannels() {
 }
 
 function loadChannelConfig() {
-    const rows = getDatabase().query('SELECT id, config_json FROM workspaces ORDER BY created_at, id').all();
+    const rows = getDatabase().query('SELECT id, project_id, config_json FROM workspaces ORDER BY created_at, id').all();
     const channels = {};
     for (const row of rows) {
         try { channels[row.id] = JSON.parse(row.config_json); } catch { channels[row.id] = {}; }
+        channels[row.id].projectId = row.project_id || 'global';
     }
     return channels;
 }

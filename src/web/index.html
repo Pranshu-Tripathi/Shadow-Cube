@@ -575,6 +575,7 @@ const api = (path, opts) => fetch(path, { headers: { 'content-type': 'applicatio
 const esc = (s) => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 const state = {
+  projects: [],
   workspaces: [],
   activeWs: null,
   // workspaceId -> [convId, ...]
@@ -645,6 +646,7 @@ function handleFrame(f) {
 
 /* ---------- Workspaces ---------- */
 async function loadWorkspaces() {
+  try { state.projects = (await api('/api/projects')).projects || []; } catch { state.projects = []; }
   const { workspaces } = await api('/api/workspaces');
   state.workspaces = workspaces;
   renderSidebar();
@@ -983,23 +985,37 @@ function openModal(html) { $('#modal-content').innerHTML = html; $('#overlay').c
 function closeModal() { $('#overlay').classList.remove('show'); }
 
 function newWorkspaceModal() {
+  const configuredProjects = state.projects.filter(p => p.configured);
+  const projectOptions = configuredProjects.map(p => `<option value="${esc(p.id)}">${esc(p.name)} — ${esc(p.path)}</option>`).join('');
   openModal(`
     <h3>New workspace</h3>
     <div class="field"><label>Name</label><input id="f-name" placeholder="my-feature" /></div>
-    <div class="field"><label>Project name</label><input id="f-pname" placeholder="bunsen" /></div>
-    <div class="field"><label>Project path</label><input id="f-pdir" placeholder="/Users/you/code/bunsen" /></div>
+    <div class="field"><label>Project</label><select id="f-project"><option value="">Custom project…</option>${projectOptions}</select></div>
+    <div id="f-custom-project">
+      <div class="field"><label>Project name</label><input id="f-pname" placeholder="bunsen" /></div>
+      <div class="field"><label>Project path</label><input id="f-pdir" placeholder="/Users/you/code/bunsen" /></div>
+    </div>
     <div class="field"><label>Base branch (optional)</label><input id="f-base" placeholder="main" /></div>
     <div class="field"><label>Provider</label><select id="f-provider"><option value="claude">claude</option><option value="codex">codex</option></select></div>
     <div class="actions"><button onclick="closeModal()">Cancel</button><button class="primary" id="f-create">Create</button></div>`);
+  const projectSelect = $('#f-project');
+  const syncProject = () => {
+    const project = configuredProjects.find(p => p.id === projectSelect.value);
+    $('#f-custom-project').style.display = project ? 'none' : '';
+    if (project && !$('#f-name').value.trim()) $('#f-name').value = project.name;
+  };
+  projectSelect.onchange = syncProject;
+  syncProject();
   $('#f-create').onclick = async () => {
     const body = {
+      projectId: projectSelect.value || undefined,
       name: $('#f-name').value.trim(),
       projectName: $('#f-pname').value.trim(),
       projectDir: $('#f-pdir').value.trim(),
       baseBranch: $('#f-base').value.trim() || undefined,
       provider: $('#f-provider').value,
     };
-    if (!body.projectName || !body.projectDir) { alert('Project name and path are required.'); return; }
+    if (!body.projectId && (!body.projectName || !body.projectDir)) { alert('Project name and path are required.'); return; }
     const { workspace, error } = await api('/api/workspaces', { method: 'POST', body: JSON.stringify(body) });
     if (error) { alert(error); return; }
     closeModal();

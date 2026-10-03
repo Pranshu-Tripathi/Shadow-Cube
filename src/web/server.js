@@ -68,6 +68,7 @@ function serializeWorkspace(id, cfg, client) {
         name: name || id,
         projectName: cfg.projectName || null,
         projectDir: cfg.projectDir || null,
+        projectId: cfg.projectId || null,
         provider: cfg.provider || 'claude',
         baseBranch: cfg.baseBranch || null,
         broadcastDiscord: !!cfg.broadcastDiscord,
@@ -95,7 +96,7 @@ function startWebServer(context, { port } = {}) {
     // can mirror Discord conversations onto the web and route inbound mirror messages.
     context.webBridge = bridge;
 
-    const { channelStore, worktrees, memory, activeProcesses, claudeStdio, sessionStore, client } = context;
+    const { channelStore, projectStore, worktrees, memory, activeProcesses, claudeStdio, sessionStore, client } = context;
 
     function getWorkspace(id) {
         const channels = channelStore.loadChannelConfig();
@@ -184,28 +185,39 @@ function startWebServer(context, { port } = {}) {
                 });
             }
 
+            if (path === '/api/projects' && req.method === 'GET') {
+                return json({ projects: projectStore.list(), projectsRoot: projectStore.projectsRoot });
+            }
+
             // --- Workspaces collection ---
             if (path === '/api/workspaces') {
                 if (req.method === 'GET') return json({ workspaces: listWorkspaces(context) });
                 if (req.method === 'POST') {
                     const body = await req.json().catch(() => ({}));
-                    if (!body.projectName || !body.projectDir) {
+                    const selectedProject = body.projectId ? projectStore.get(body.projectId) : null;
+                    if (body.projectId && (!selectedProject || !selectedProject.path)) {
+                        return badRequest('Select a configured project repository.');
+                    }
+                    const requestedName = selectedProject?.name || body.projectName;
+                    const requestedDir = selectedProject?.path || body.projectDir;
+                    if (!requestedName || !requestedDir) {
                         return badRequest('projectName and projectDir are required');
                     }
-                    const projectDir = resolvePath(body.projectDir);
+                    const projectDir = resolvePath(requestedDir);
                     if (!isGitRepo(projectDir)) {
                         return badRequest(`${projectDir} is not a git repository (or does not exist).`);
                     }
-                    const name = body.name || body.projectName;
+                    const name = body.name || requestedName;
                     const id = `web:${slugify(name)}-${Date.now().toString(36)}`;
                     const patch = {
                         name,
-                        projectName: body.projectName,
+                        projectName: requestedName,
                         projectDir,
                         provider: body.provider || 'claude',
                     };
                     if (body.baseBranch) patch.baseBranch = body.baseBranch;
                     channelStore.updateChannel(id, patch);
+                    if (selectedProject) projectStore.assignWorkspace(id, selectedProject.id);
                     return json({ workspace: getWorkspace(id) }, { status: 201 });
                 }
                 return badRequest('method not allowed');
@@ -232,6 +244,12 @@ function startWebServer(context, { port } = {}) {
                             if (!isGitRepo(dir)) return badRequest(`${dir} is not a git repository (or does not exist).`);
                             patch.projectDir = dir;
                         }
+                        if (body.projectId != null) {
+                            const project = projectStore.get(body.projectId);
+                            if (!project) return badRequest('Unknown project.');
+                            patch.projectName = project.path ? project.name : null;
+                            patch.projectDir = project.path;
+                        }
                         if (typeof body.broadcastDiscord === 'boolean') {
                             patch.broadcastDiscord = body.broadcastDiscord;
                             // Turning broadcast on provisions a Discord channel named after the workspace.
@@ -244,6 +262,7 @@ function startWebServer(context, { port } = {}) {
                             }
                         }
                         channelStore.updateChannel(workspaceId, patch);
+                        if (body.projectId != null) projectStore.assignWorkspace(workspaceId, body.projectId);
                         return json({ workspace: getWorkspace(workspaceId) });
                     }
                     if (req.method === 'DELETE') {
