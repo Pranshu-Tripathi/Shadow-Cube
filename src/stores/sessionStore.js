@@ -1,38 +1,46 @@
-const { SESSIONS_CONFIG_PATH } = require('../config');
-const { loadJson, saveJson } = require('./jsonStore');
 const fs = require('fs');
+const { getDatabase } = require('../db/database');
 
 function emptySessions() {
     return { threads: {} };
 }
 
 function loadSessionsConfig() {
-    return loadJson(SESSIONS_CONFIG_PATH, emptySessions);
+    const threads = {};
+    for (const row of getDatabase().query("SELECT conversation_id, session_id, channel_name FROM provider_sessions WHERE provider = 'claude'").all()) {
+        threads[row.conversation_id] = { 'claude session id': row.session_id, channel: row.channel_name };
+    }
+    return { threads };
 }
 
 function saveSessionsConfig(config) {
-    saveJson(SESSIONS_CONFIG_PATH, config);
+    const db = getDatabase();
+    db.transaction(() => {
+        db.query("DELETE FROM provider_sessions WHERE provider = 'claude'").run();
+        for (const [threadId, entry] of Object.entries(config.threads || {})) {
+            if (entry['claude session id']) setSessionId(threadId, entry['claude session id'], entry.channel);
+        }
+    })();
 }
 
 function getSessionId(threadId) {
-    const config = loadSessionsConfig();
-    const entry = config.threads[threadId];
-    return entry ? entry['claude session id'] : '';
+    return getDatabase().query("SELECT session_id FROM provider_sessions WHERE conversation_id = ? AND provider = 'claude'")
+        .get(threadId)?.session_id || '';
 }
 
 function setSessionId(threadId, sessionId, channelName) {
-    const config = loadSessionsConfig();
-    config.threads[threadId] = {
-        'claude session id': sessionId,
-        'channel': channelName
-    };
-    saveSessionsConfig(config);
+    getDatabase().query(`
+        INSERT INTO provider_sessions (conversation_id, provider, session_id, channel_name, updated_at)
+        VALUES (?, 'claude', ?, ?, ?)
+        ON CONFLICT(conversation_id, provider) DO UPDATE SET
+            session_id = excluded.session_id,
+            channel_name = excluded.channel_name,
+            updated_at = excluded.updated_at
+    `).run(threadId, sessionId, channelName || null, Date.now());
 }
 
 function clearSession(threadId) {
-    const config = loadSessionsConfig();
-    delete config.threads[threadId];
-    saveSessionsConfig(config);
+    getDatabase().query("DELETE FROM provider_sessions WHERE conversation_id = ? AND provider = 'claude'").run(threadId);
 }
 
 function getLatestSessionId(sessionIndexPath) {

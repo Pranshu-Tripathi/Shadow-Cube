@@ -1,22 +1,33 @@
-const { CHANNEL_CONFIG_PATH } = require('../config');
-const { loadJson, saveJson } = require('./jsonStore');
+const { getDatabase, upsertWorkspace } = require('../db/database');
 
 function emptyChannels() {
     return {};
 }
 
 function loadChannelConfig() {
-    return loadJson(CHANNEL_CONFIG_PATH, emptyChannels);
+    const rows = getDatabase().query('SELECT id, config_json FROM workspaces ORDER BY created_at, id').all();
+    const channels = {};
+    for (const row of rows) {
+        try { channels[row.id] = JSON.parse(row.config_json); } catch { channels[row.id] = {}; }
+    }
+    return channels;
 }
 
 function saveChannelConfig(config) {
-    saveJson(CHANNEL_CONFIG_PATH, config);
+    const db = getDatabase();
+    db.transaction(() => {
+        const ids = new Set(Object.keys(config));
+        for (const row of db.query('SELECT id FROM workspaces').all()) {
+            if (!ids.has(row.id)) db.query('DELETE FROM workspaces WHERE id = ?').run(row.id);
+        }
+        for (const [id, cfg] of Object.entries(config)) upsertWorkspace(db, id, cfg || {});
+    })();
 }
 
 function updateChannel(channelId, patch) {
     const config = loadChannelConfig();
     config[channelId] = { ...(config[channelId] || {}), ...patch };
-    saveChannelConfig(config);
+    upsertWorkspace(getDatabase(), channelId, config[channelId]);
     return config[channelId];
 }
 
@@ -24,7 +35,7 @@ function removeChannelField(channelId, field) {
     const config = loadChannelConfig();
     if (config[channelId]) {
         delete config[channelId][field];
-        saveChannelConfig(config);
+        upsertWorkspace(getDatabase(), channelId, config[channelId]);
     }
 }
 

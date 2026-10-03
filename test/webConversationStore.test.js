@@ -4,11 +4,13 @@ const os = require('os');
 const path = require('path');
 const { createWebConversationStore } = require('../src/stores/webConversationStore');
 const { createWebHub } = require('../src/web/webHub');
+const { createStateDatabase } = require('../src/db/database');
 
 function tempStore() {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shadow-cube-web-store-'));
-    const filePath = path.join(dir, 'conversations.json');
-    return { dir, filePath, store: createWebConversationStore({ filePath }) };
+    const filePath = path.join(dir, 'state.sqlite');
+    const db = createStateDatabase({ dbPath: filePath, importLegacy: false });
+    return { dir, filePath, db, store: createWebConversationStore({ db }) };
 }
 
 describe('web conversation persistence', () => {
@@ -40,7 +42,9 @@ describe('web conversation persistence', () => {
             });
             store.flush();
 
-            const relaunched = createWebConversationStore({ filePath });
+            store.flush();
+            const relaunchedDb = createStateDatabase({ dbPath: filePath, importLegacy: false });
+            const relaunched = createWebConversationStore({ db: relaunchedDb });
             expect(relaunched.listConversations('workspace')[0].hasMessages).toBe(true);
             expect(relaunched.getHistory('workspace', conversation.id)).toEqual([{
                 msgId: 'message-1', role: 'agent', content: 'finished', kind: 'text',
