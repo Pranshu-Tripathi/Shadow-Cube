@@ -26,6 +26,9 @@ export default function App() {
   const socket = useRef<WebSocket | null>(null);
   const conversationIds = useRef<string[]>([]);
   const reconnectTimer = useRef<number | undefined>(undefined);
+  const legacyProviders = useRef<Record<string, Provider>>((() => {
+    try { return JSON.parse(localStorage.getItem('sc.providers') || '{}'); } catch { return {}; }
+  })());
   const activeWorkspace = workspaces.find((workspace) => workspace.id === activeWorkspaceId) || null;
   const activeConversation = conversations.find((conversation) => conversation.id === activeConversationId) || null;
 
@@ -92,13 +95,10 @@ export default function App() {
   const selectWorkspace = async (workspaceId: string) => {
     setActiveWorkspaceId(workspaceId); setSettingsOpen(false); setError('');
     try {
-      let result = await api<{ conversations: Conversation[] }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/conversations`);
-      if (!result.conversations.length) {
-        const created = await api<{ conversation: Conversation }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/conversations`, { method: 'POST', body: '{}' });
-        result = { conversations: [created.conversation] };
-      }
+      const result = await api<{ conversations: Conversation[] }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/conversations`);
       setConversations(result.conversations);
       if (result.conversations[0]) await openConversation(workspaceId, result.conversations[0].id);
+      else setActiveConversationId(null);
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not open workspace.'); }
   };
 
@@ -112,10 +112,11 @@ export default function App() {
   };
 
   const updateWorkspace = (workspace: Workspace) => setWorkspaces((current) => current.map((item) => item.id === workspace.id ? workspace : item));
-  const provider = (activeConversation?.provider || activeWorkspace?.provider || 'claude') as Provider;
+  const provider = (activeConversation?.provider || (activeConversationId ? legacyProviders.current[activeConversationId] : null) || activeWorkspace?.provider || 'claude') as Provider;
   const updateProvider = async (next: Provider) => {
     if (!activeWorkspace || !activeConversationId) return;
     await api(`/api/workspaces/${encodeURIComponent(activeWorkspace.id)}/conversations/${encodeURIComponent(activeConversationId)}`, { method: 'PATCH', body: jsonBody({ provider: next }) });
+    legacyProviders.current[activeConversationId] = next;
     setConversations((current) => current.map((item) => item.id === activeConversationId ? { ...item, provider: next } : item));
   };
   const send = async (prompt: string) => {

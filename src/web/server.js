@@ -32,10 +32,21 @@ function isGitRepo(dir) {
 const WEB_DIST_DIR = path.join(__dirname, '..', '..', 'dist', 'web');
 
 function json(data, init = {}) {
+    const { headers, ...rest } = init;
     return new Response(JSON.stringify(data), {
-        headers: { 'content-type': 'application/json' },
-        ...init,
+        ...rest,
+        headers: securityHeaders({ 'content-type': 'application/json', ...(headers || {}) }),
     });
+}
+
+function securityHeaders(extra = {}) {
+    return {
+        'x-content-type-options': 'nosniff',
+        'x-frame-options': 'DENY',
+        'referrer-policy': 'no-referrer',
+        'content-security-policy': "default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data:; media-src 'self' blob:; style-src 'self'; script-src 'self'",
+        ...extra,
+    };
 }
 
 function badRequest(message) {
@@ -453,11 +464,14 @@ function startWebServer(context, { port } = {}) {
             const assetPath = pathModuleSafeJoin(WEB_DIST_DIR, relative);
             if (assetPath) {
                 const asset = Bun.file(assetPath);
-                if (await asset.exists()) return new Response(asset);
+                if (await asset.exists()) {
+                    const immutable = /\/assets\/[^/]+-[A-Za-z0-9_-]+\.(js|css)$/.test(path);
+                    return new Response(asset, { headers: securityHeaders({ 'cache-control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache' }) });
+                }
             }
             const index = Bun.file(pathModuleSafeJoin(WEB_DIST_DIR, 'index.html'));
-            if (await index.exists()) return new Response(index, { headers: { 'content-type': 'text/html; charset=utf-8' } });
-            return new Response('Web UI is not built. Run `bun run build:web`.', { status: 503 });
+            if (await index.exists()) return new Response(index, { headers: securityHeaders({ 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' }) });
+            return new Response('Web UI is not built. Run `bun run build:web`.', { status: 503, headers: securityHeaders({ 'content-type': 'text/plain; charset=utf-8' }) });
         },
         websocket: {
             open(ws) {
@@ -503,4 +517,6 @@ function pathModuleSafeJoin(root, relative) {
 
 module.exports = {
     startWebServer,
+    pathModuleSafeJoin,
+    securityHeaders,
 };

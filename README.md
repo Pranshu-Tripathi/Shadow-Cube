@@ -1,6 +1,6 @@
 # Shadow Cube Bridge
 
-A Discord bot that bridges Claude Code CLI to Discord. Send prompts in a channel, get streaming responses in threads with real-time thinking, tool use diffs, and code block syntax highlighting.
+A local web and Discord workspace for Claude Code and Codex. The Bun backend owns agent sessions, Git worktrees, voice transcription, Discord mirroring, and durable SQLite state; the React interface provides the primary desktop experience.
 
 ## Features
 
@@ -58,8 +58,23 @@ A Discord bot that bridges Claude Code CLI to Discord. Send prompts in a channel
 
 5. Run the bot:
    ```bash
-   bun relay.js
+   bun start
    ```
+
+   `bun start` builds the React/Vite client and starts the Bun backend at `http://127.0.0.1:8200`. For frontend development, run `bun run start:server` and `bun run dev:web` in separate terminals.
+
+## Web interface
+
+The web interface groups workspaces under their source projects and keeps conversations synchronized with Discord when broadcasting is enabled. It includes:
+
+- streamed agent messages, thinking and tool activity;
+- AskUserQuestion and Codex approval controls that can be answered from web or Discord;
+- local voice dictation;
+- project, provider, base-branch, rules, memory and Discord settings;
+- initial worktree commands;
+- session reset, worktree removal and destroy actions with dirty-worktree warnings.
+
+Set `PROJECTS_ROOT` to the directory whose immediate Git-repository children should appear in the project picker. It defaults to the parent of `PROJECT_DIR`. The selected folder name is used as the default project and workspace name.
 
 ## Usage
 
@@ -84,7 +99,11 @@ Each channel chooses which git repository it operates on. **A channel must be po
 - **`!project`** or **`!project -view`** - show the channel's configured project
 - **`!project -clear`** - clear the project for this channel
 
-The setting is per-channel and persists across restarts (stored in `config/channels.json`). A channel's worktree is created at **`<WORKTREES_DIR>/<name>/<channel-name>`**, so multiple channels can share one project and different projects stay isolated. Two channels can also target completely different repositories.
+The setting is per-channel/workspace and persists across restarts in SQLite. A workspace's worktree is created at **`<WORKTREES_DIR>/<name>/<workspace-name>`**, so multiple workspaces can share one project and different projects stay isolated.
+
+### Initial worktree commands
+
+Project settings can contain an ordered list of trusted local shell commands such as `bun install`. `.out` and the local Git excludes are always created first. Commands run sequentially only after a genuinely new worktree is created, stop on the first failure, and record their output in SQLite. Existing worktrees do not execute newly configured commands automatically; use **Run setup again** when that is intended.
 
 ## Providers (Claude / Codex)
 
@@ -190,3 +209,30 @@ The bot spawns `claude -p` with `--output-format stream-json` for each query, pa
 Voice messages are intercepted in `src/commands/registry.js` before the command loop and handled by `src/voice/` — `audio.js` (detection, download, ffmpeg), `transcriber.js` (whisper.cpp), `vocabulary.js` (glossary), `cleanup.js` (ollama proof-read) and `voiceFlow.js` (the confirm card, countdown and edit modal). Transcription is serialised through a queue so two clips can't contend for the GPU.
 
 For channels set to `!provider codex`, the bot instead drives a long-lived `codex app-server` process over its NDJSON JSON-RPC protocol (`initialize` → `thread/start`/`thread/resume` → `turn/start`), routing the streamed `item/*` and `turn/*` notifications to Discord and turning `requestApproval` server-requests into Discord approval buttons. Codex lives under `src/providers/codex/`, kept separate from the Claude engine under `src/providers/claude/`.
+
+## State, migration, and backups
+
+Structured runtime state lives in `sessions/shadow-cube.sqlite` by default. On the first launch after upgrading, Shadow Cube copies data from these legacy files in one transaction:
+
+- `config/channels.json`
+- `sessions/config.json`
+- `sessions/codex-config.json`
+- `sessions/web-conversations.json`
+
+The importer is idempotent and never edits or deletes the legacy files. Existing project names are retained. Workspaces without a configured project are placed under **Global / no project**.
+
+Create a transactionally consistent backup at any time:
+
+```bash
+bun run backup:state
+```
+
+Backups are written to `sessions/backups/` and are not automatically deleted. To restore, stop Shadow Cube, preserve the current `sessions/shadow-cube.sqlite*` files, copy the selected backup to the configured `STATE_DB_PATH`, and then restart. The retained legacy JSON files remain an additional rollback source.
+
+Before releasing, run the complete validation gate:
+
+```bash
+bun run check
+```
+
+The HTTP server binds to `127.0.0.1`. Do not expose it directly to a network; use an authenticated TLS reverse proxy if remote browser access is required. Discord remains the intended remote-phone surface.

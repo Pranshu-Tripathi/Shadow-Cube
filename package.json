@@ -9,6 +9,8 @@
     "build:web": "vite build --config web/vite.config.ts",
     "dev:web": "vite --config web/vite.config.ts",
     "typecheck:web": "tsc -p web/tsconfig.json --noEmit",
+    "check": "bun run typecheck:web && bun run build:web && bun test",
+    "backup:state": "bun scripts/backup-state.js",
     "test": "bun test",
     "setup:voice": "bash scripts/setup-voice.sh"
   },
