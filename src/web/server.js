@@ -29,7 +29,7 @@ function isGitRepo(dir) {
     }
 }
 
-const INDEX_HTML = path.join(__dirname, 'index.html');
+const WEB_DIST_DIR = path.join(__dirname, '..', '..', 'dist', 'web');
 
 function json(data, init = {}) {
     return new Response(JSON.stringify(data), {
@@ -407,6 +407,18 @@ function startWebServer(context, { port } = {}) {
                     return json({ messages });
                 }
 
+                const conversationMatch = sub.match(/^\/conversations\/([^/]+)$/);
+                if (conversationMatch && req.method === 'PATCH') {
+                    const convId = decodeURIComponent(conversationMatch[1]);
+                    const body = await req.json().catch(() => ({}));
+                    try {
+                        const provider = conversationStore.setProvider(workspaceId, convId, body.provider);
+                        return json({ ok: true, provider });
+                    } catch (error) {
+                        return badRequest(error.message);
+                    }
+                }
+
                 // Conversation actions: /conversations/:cid/(prompt|answer|approval|clear)
                 const convMatch = sub.match(/^\/conversations\/([^/]+)\/(prompt|answer|approval|clear)$/);
                 if (convMatch && req.method === 'POST') {
@@ -416,6 +428,7 @@ function startWebServer(context, { port } = {}) {
 
                     if (action === 'prompt') {
                         if (!body.prompt) return badRequest('prompt is required');
+                        if (body.provider) conversationStore.setProvider(workspaceId, convId, body.provider);
                         const result = await bridge.dispatch(workspaceId, convId, body.prompt, { provider: body.provider });
                         return result.error ? badRequest(result.error) : json(result);
                     }
@@ -435,11 +448,16 @@ function startWebServer(context, { port } = {}) {
                 return notFound();
             }
 
-            // Notebook UI (single self-contained file, no build step).
-            if (path === '/' || path === '/index.html') {
-                return new Response(Bun.file(INDEX_HTML), { headers: { 'content-type': 'text/html; charset=utf-8' } });
+            // Vite production assets. Unknown non-API routes fall back to index.html.
+            const relative = path === '/' ? 'index.html' : path.replace(/^\/+/, '');
+            const assetPath = pathModuleSafeJoin(WEB_DIST_DIR, relative);
+            if (assetPath) {
+                const asset = Bun.file(assetPath);
+                if (await asset.exists()) return new Response(asset);
             }
-            return notFound();
+            const index = Bun.file(pathModuleSafeJoin(WEB_DIST_DIR, 'index.html'));
+            if (await index.exists()) return new Response(index, { headers: { 'content-type': 'text/html; charset=utf-8' } });
+            return new Response('Web UI is not built. Run `bun run build:web`.', { status: 503 });
         },
         websocket: {
             open(ws) {
@@ -476,6 +494,11 @@ function startWebServer(context, { port } = {}) {
     }
 
     return { server, hub };
+}
+
+function pathModuleSafeJoin(root, relative) {
+    const resolved = path.resolve(root, relative);
+    return resolved === root || resolved.startsWith(root + path.sep) ? resolved : null;
 }
 
 module.exports = {

@@ -6,8 +6,9 @@ function createWebConversationStore({ db = getDatabase() } = {}) {
         return {
             id: conversation.id,
             name: conversation.title || conversation.name || null,
-            source: 'web',
+            source: conversation.source || 'web',
             hasMessages: !!conversation.has_messages,
+            provider: conversation.provider || null,
         };
     }
 
@@ -86,6 +87,14 @@ function createWebConversationStore({ db = getDatabase() } = {}) {
         if (conversation) db.query('DELETE FROM messages WHERE conversation_id = ?').run(convId);
     }
 
+    function setProvider(workspaceId, convId, provider) {
+        if (!['claude', 'codex'].includes(provider)) throw new Error('Provider must be claude or codex.');
+        const result = db.query('UPDATE conversations SET provider = ?, updated_at = ? WHERE id = ? AND workspace_id = ?')
+            .run(provider, Date.now(), convId, workspaceId);
+        if (!result.changes) throw new Error('Unknown conversation.');
+        return provider;
+    }
+
     return {
         createConversation,
         ensureConversation,
@@ -93,6 +102,7 @@ function createWebConversationStore({ db = getDatabase() } = {}) {
         getHistory,
         recordFrame,
         clearHistory,
+        setProvider,
         flush() {},
     };
 }

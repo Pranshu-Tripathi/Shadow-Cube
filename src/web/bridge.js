@@ -232,16 +232,17 @@ function createWebBridge(context, hub, conversationStore) {
         const cfg = cfgFor(workspaceId);
         const out = [];
         const seen = new Set();
-        const push = (id, name, source, hasMessages) => {
+        const push = (id, name, source, hasMessages, provider) => {
             if (seen.has(id)) return;
             seen.add(id);
             const conversation = { id, name: name || null, source };
             if (typeof hasMessages === 'boolean') conversation.hasMessages = hasMessages;
+            if (provider) conversation.provider = provider;
             out.push(conversation);
         };
 
         for (const conversation of conversationStore.listConversations(workspaceId)) {
-            push(conversation.id, conversation.name, conversation.source, conversation.hasMessages);
+            push(conversation.id, conversation.name, conversation.source, conversation.hasMessages, conversation.provider);
         }
         for (const convId of Object.keys(cfg.mirrorThreads || {})) push(convId, null, 'web');
 

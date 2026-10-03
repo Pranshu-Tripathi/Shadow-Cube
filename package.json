@@ -4,19 +4,31 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "start": "bun relay.js",
+    "start": "bun run build:web && bun relay.js",
+    "start:server": "bun relay.js",
+    "build:web": "vite build --config web/vite.config.ts",
+    "dev:web": "vite --config web/vite.config.ts",
+    "typecheck:web": "tsc -p web/tsconfig.json --noEmit",
     "test": "bun test",
     "setup:voice": "bash scripts/setup-voice.sh"
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "vite": "^8.3.2"
   },
   "peerDependencies": {
-    "typescript": "^5"
+    "typescript": "^7.0.2"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.28.0",
     "axios": "^1.13.6",
-    "discord.js": "^14.25.1"
+    "discord.js": "^14.25.1",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
   }
 }
