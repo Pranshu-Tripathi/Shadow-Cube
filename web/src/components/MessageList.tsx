@@ -26,6 +26,13 @@ export function MessageList({ messages, questions, approval, onAnswer, onApprove
       </article>;
     })}
     {questions && <QuestionCard questions={questions} onSubmit={onAnswer} />}
-    {approval && <section className="interaction-card approval-card"><div className="eyebrow">Approval required</div><Markdown>{approval.content}</Markdown><div className="card-actions">{approval.options.map((option) => <button className={option.style === 'primary' ? 'primary' : ''} key={option.decision} onClick={() => onApprove(option.decision)}>{option.label}</button>)}</div></section>}
+    {approval && <section className="interaction-card approval-card">
+      <div className="eyebrow">Approval required</div>
+      <div className="approval-content"><Markdown>{approval.content}</Markdown></div>
+      <div className="card-actions">{approval.options.map((option) => {
+        const tone = option.tone || option.style;
+        return <button className={tone === 'primary' ? 'primary' : tone === 'danger' ? 'danger' : ''} key={option.decision} onClick={() => onApprove(option.decision)}>{option.label}</button>;
+      })}</div>
+    </section>}
   </div>;
 }

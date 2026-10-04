@@ -51,5 +51,5 @@ export interface Question {
 export interface Approval {
   token: string;
   content: string;
-  options: Array<{ label: string; decision: string; style?: string }>;
+  options: Array<{ label: string; decision: string; tone?: 'primary' | 'danger' | 'default'; style?: string }>;
 }

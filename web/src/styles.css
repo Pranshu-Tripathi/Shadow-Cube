@@ -112,6 +112,13 @@ select:focus, input:focus, textarea:focus { border-color: var(--accent-strong); 
 .empty-cube { font-size: 32px; }
 .interaction-card { margin: 24px 0; border: 1px solid #47547b; border-radius: 12px; padding: 17px; background: linear-gradient(135deg, #171d2a, #111620); }
 .eyebrow { color: var(--accent); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; margin-bottom: 13px; }
+.approval-card, .approval-content { min-width: 0; }
+.approval-content { overflow-wrap: anywhere; line-height: 1.5; }
+.approval-content > :first-child { margin-top: 0; }
+.approval-content > :last-child { margin-bottom: 0; }
+.approval-content pre { max-width: 100%; overflow-x: hidden; padding: 13px; border: 1px solid var(--border); border-radius: 9px; background: #080a0e; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
+.approval-content code { white-space: inherit; overflow-wrap: anywhere; word-break: break-word; }
+.approval-content code:not(pre code) { padding: 1px 5px; border: 1px solid #292f3d; border-radius: 5px; background: #1a1f2a; font-family: "SFMono-Regular", Consolas, monospace; font-size: .9em; }
 .question-card fieldset { border: 0; padding: 0; margin: 0 0 20px; }
 .question-card legend { font-size: 12px; color: var(--muted); font-weight: 700; }
 .question-card p { line-height: 1.5; }
