@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 function extensionFor(type: string) { return type.includes('mp4') ? 'mp4' : type.includes('ogg') ? 'ogg' : 'webm'; }
 
@@ -6,9 +6,16 @@ export function Composer({ workspaceId, disabled, voiceEnabled, onSend }: { work
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState('');
+  const editor = useRef<HTMLTextAreaElement | null>(null);
   const recorder = useRef<MediaRecorder | null>(null);
   const stream = useRef<MediaStream | null>(null);
   const chunks = useRef<Blob[]>([]);
+  useEffect(() => {
+    const textarea = editor.current;
+    if (!textarea) return;
+    textarea.style.height = 'auto';
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 220)}px`;
+  }, [text]);
   const submit = async () => {
     const prompt = text.trim();
     if (!prompt || sending) return;
@@ -46,7 +53,7 @@ export function Composer({ workspaceId, disabled, voiceEnabled, onSend }: { work
   return <div className="composer-wrap">
     {voiceStatus && <div className="voice-status">{voiceStatus}</div>}
     <div className="composer">
-      <textarea value={text} disabled={disabled} placeholder="Message the agent…" rows={1} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => {
+      <textarea ref={editor} value={text} disabled={disabled} placeholder="Message the agent…" rows={3} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => {
         if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void submit(); }
       }} />
       {voiceEnabled && <button className="icon-button mic" title="Hold to talk" onPointerDown={() => void startVoice()} onPointerUp={stopVoice} onPointerCancel={stopVoice}>◉</button>}
