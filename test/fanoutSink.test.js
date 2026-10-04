@@ -48,4 +48,13 @@ describe('dynamic fanout sink', () => {
         await sink.askQuestion({}, 'request', 'tool', { questions: [] });
         expect(seen).toEqual(['web', 'discord']);
     });
+
+    test('resolves dynamic mirrors before presenting an interactive question', async () => {
+        const seen = [];
+        const primary = { ...recordingSink('web', []), askQuestion: () => seen.push('web') };
+        const mirror = { ...recordingSink('discord', []), askQuestion: () => seen.push('discord') };
+        const sink = createFanoutSink({ primary, getMirrors: async () => [mirror] });
+        await sink.askQuestion({}, 'request', 'tool', { questions: [{ question: 'Continue?' }] });
+        expect(seen).toEqual(['web', 'discord']);
+    });
 });

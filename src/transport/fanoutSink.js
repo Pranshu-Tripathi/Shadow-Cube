@@ -31,14 +31,17 @@ function createFanoutSink({ primary, mirrors = [], getMirrors }) {
         parentName: primary.parentName,
         isThread: primary.isThread,
         send,
-        // Interactive prompts stay on the primary (web) surface.
+        // Interactive prompts must be actionable on every active surface. Keep
+        // mirrors best-effort, but make delivery failures visible in server logs.
         askQuestion: async (...args) => {
             if (primary.askQuestion) await Promise.resolve(primary.askQuestion(...args));
             const activeMirrors = getMirrors
                 ? await Promise.resolve(getMirrors()).catch(() => [])
                 : mirrors;
             await Promise.all(activeMirrors.map((mirror) => (
-                mirror.askQuestion ? Promise.resolve(mirror.askQuestion(...args)).catch(() => {}) : null
+                mirror.askQuestion ? Promise.resolve(mirror.askQuestion(...args)).catch((error) => {
+                    console.error(`[DEBUG] failed to mirror interactive question to ${mirror.__sinkKind || 'sink'}:`, error.message);
+                }) : null
             )));
         },
         requestApproval: primary.requestApproval ? (...args) => primary.requestApproval(...args) : undefined,
