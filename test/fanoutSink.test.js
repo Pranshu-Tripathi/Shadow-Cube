@@ -57,4 +57,22 @@ describe('dynamic fanout sink', () => {
         await sink.askQuestion({}, 'request', 'tool', { questions: [{ question: 'Continue?' }] });
         expect(seen).toEqual(['web', 'discord']);
     });
+
+    test('presents and settles approvals on both primary and mirror surfaces', async () => {
+        const presented = [];
+        const settled = [];
+        const approvalSink = (kind) => ({
+            ...recordingSink(kind, []),
+            requestApproval: async (token, _content, _options, resolve) => {
+                presented.push({ kind, token, resolve });
+                return { resolve: async (decision) => settled.push(`${kind}:${decision}`) };
+            },
+        });
+        const sink = createFanoutSink({ primary: approvalSink('web'), mirrors: [approvalSink('discord')] });
+        const handle = await sink.requestApproval('approval-1', 'Run command?', [], () => true);
+
+        expect(presented.map(({ kind }) => kind)).toEqual(['web', 'discord']);
+        await handle.resolve('accept');
+        expect(settled).toEqual(['web:accept', 'discord:accept']);
+    });
 });

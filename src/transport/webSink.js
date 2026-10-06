@@ -101,7 +101,17 @@ function createWebSink({ hub, workspaceId, workspaceName, convId, questionCoordi
             content,
             options,
         });
-        return Promise.resolve();
+        let settled = false;
+        return Promise.resolve({
+            resolve(decision) {
+                if (settled) return Promise.resolve();
+                settled = true;
+                const pending = hub.pendingApprovals.get(convId);
+                if (pending?.token === token) hub.pendingApprovals.delete(convId);
+                hub.broadcast({ type: 'approval.resolved', workspaceId, convId, token, decision });
+                return Promise.resolve();
+            },
+        });
     }
 
     return {

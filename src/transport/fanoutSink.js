@@ -4,13 +4,21 @@
 // mirrors are best-effort output copies and never block or break the primary.
 
 function createFanoutSink({ primary, mirrors = [], getMirrors }) {
+    async function activeMirrors() {
+        if (!getMirrors) return mirrors;
+        try {
+            return await Promise.resolve(getMirrors());
+        } catch (error) {
+            console.error('[DEBUG] failed to resolve active mirror sinks:', error.message);
+            return [];
+        }
+    }
+
     async function send(payload) {
         const primaryHandle = await primary.send(payload);
-        const activeMirrors = getMirrors
-            ? await Promise.resolve(getMirrors()).catch(() => [])
-            : mirrors;
+        const resolvedMirrors = await activeMirrors();
         const mirrorHandles = await Promise.all(
-            activeMirrors.map((m) => Promise.resolve(m.send(payload)).catch(() => null))
+            resolvedMirrors.map((m) => Promise.resolve(m.send(payload)).catch(() => null))
         );
 
         return {
@@ -35,16 +43,33 @@ function createFanoutSink({ primary, mirrors = [], getMirrors }) {
         // mirrors best-effort, but make delivery failures visible in server logs.
         askQuestion: async (...args) => {
             if (primary.askQuestion) await Promise.resolve(primary.askQuestion(...args));
-            const activeMirrors = getMirrors
-                ? await Promise.resolve(getMirrors()).catch(() => [])
-                : mirrors;
-            await Promise.all(activeMirrors.map((mirror) => (
+            const resolvedMirrors = await activeMirrors();
+            await Promise.all(resolvedMirrors.map((mirror) => (
                 mirror.askQuestion ? Promise.resolve(mirror.askQuestion(...args)).catch((error) => {
                     console.error(`[DEBUG] failed to mirror interactive question to ${mirror.__sinkKind || 'sink'}:`, error.message);
                 }) : null
             )));
         },
-        requestApproval: primary.requestApproval ? (...args) => primary.requestApproval(...args) : undefined,
+        requestApproval: primary.requestApproval ? async (...args) => {
+            const primaryHandle = await Promise.resolve(primary.requestApproval(...args));
+            const resolvedMirrors = await activeMirrors();
+            const mirrorHandles = await Promise.all(resolvedMirrors.map((mirror) => (
+                mirror.requestApproval ? Promise.resolve(mirror.requestApproval(...args)).catch((error) => {
+                    console.error(`[DEBUG] failed to mirror approval to ${mirror.__sinkKind || 'sink'}:`, error.message);
+                    return null;
+                }) : null
+            )));
+            const handles = [primaryHandle, ...mirrorHandles].filter(Boolean);
+            return {
+                resolve(decision, context) {
+                    return Promise.all(handles.map((handle) => (
+                        handle.resolve ? Promise.resolve(handle.resolve(decision, context)).catch((error) => {
+                            console.error('[DEBUG] failed to settle approval surface:', error.message);
+                        }) : null
+                    ))).then(() => {});
+                },
+            };
+        } : undefined,
     };
 }
 

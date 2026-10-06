@@ -155,10 +155,14 @@ function startWebServer(context, { port } = {}) {
         const pending = hub.pendingApprovals.get(convId);
         if (!pending) return { error: 'no pending approval' };
         if (!pending.options.some((option) => option.decision === decision)) return { error: 'invalid approval decision' };
-        hub.pendingApprovals.delete(convId);
         const accepted = pending.resolve(decision);
         if (!accepted) return { error: 'approval is no longer active' };
-        hub.broadcast({ type: 'approval.resolved', convId, token: pending.token, decision });
+        // Fan-out approval handles settle every surface. Retain this fallback for a
+        // direct WebSink that has no coordinating surface handle.
+        if (hub.pendingApprovals.get(convId) === pending) {
+            hub.pendingApprovals.delete(convId);
+            hub.broadcast({ type: 'approval.resolved', convId, token: pending.token, decision });
+        }
         return { ok: true };
     }
 
