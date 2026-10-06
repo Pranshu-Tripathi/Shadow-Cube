@@ -32,6 +32,10 @@ export default function App() {
   })());
   const activeWorkspace = workspaces.find((workspace) => workspace.id === activeWorkspaceId) || null;
   const activeConversation = conversations.find((conversation) => conversation.id === activeConversationId) || null;
+  const waitingConversationIds = useMemo(() => new Set([
+    ...Object.entries(questions).filter(([, pending]) => pending.length > 0).map(([id]) => id),
+    ...Object.keys(approvals),
+  ]), [questions, approvals]);
 
   const loadProjects = useCallback(async () => {
     const result = await api<{ projects: Project[] }>('/api/projects'); setProjects(result.projects);
@@ -137,7 +141,7 @@ export default function App() {
 
   return <div className="app-shell">
     <Sidebar projects={projects} workspaces={workspaces} activeId={activeWorkspaceId} connected={connected} onSelect={(id) => void selectWorkspace(id)} onNew={() => setNewWorkspaceOpen(true)} />
-    <ConversationSidebar workspace={activeWorkspace} conversations={conversations} activeId={activeConversationId} onSelect={(id) => activeWorkspace && void openConversation(activeWorkspace.id, id)} onNew={() => void createConversation()} />
+    <ConversationSidebar workspace={activeWorkspace} conversations={conversations} activeId={activeConversationId} waitingIds={waitingConversationIds} onSelect={(id) => activeWorkspace && void openConversation(activeWorkspace.id, id)} onNew={() => void createConversation()} />
     <main className="main-panel">
       {!activeWorkspace ? <div className="app-empty"><div className="empty-cube">◆</div><h1>Choose a workspace</h1><p>Select an existing workspace or create a new one.</p></div> : <>
         <header className="workspace-header">
