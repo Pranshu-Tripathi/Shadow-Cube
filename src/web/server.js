@@ -193,6 +193,9 @@ function startWebServer(context, { port } = {}) {
                     voice: webVoice.available().length === 0,
                 });
             }
+            if (path === '/api/pending-interactions' && req.method === 'GET') {
+                return json({ interactions: hub.listPendingInteractions() });
+            }
 
             if (path === '/api/projects' && req.method === 'GET') {
                 return json({ projects: projectStore.list(), projectsRoot: projectStore.projectsRoot });

@@ -53,3 +53,9 @@ export interface Approval {
   content: string;
   options: Array<{ label: string; decision: string; tone?: 'primary' | 'danger' | 'default'; style?: string }>;
 }
+
+export interface PendingInteraction {
+  convId: string;
+  workspaceId: string | null;
+  kinds: Array<'question' | 'approval'>;
+}

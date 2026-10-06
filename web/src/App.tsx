@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, jsonBody } from './api';
-import type { Approval, Conversation, Message, Project, Provider, Question, Workspace } from './types';
+import type { Approval, Conversation, Message, PendingInteraction, Project, Provider, Question, Workspace } from './types';
 import { Sidebar } from './components/Sidebar';
 import { ConversationSidebar } from './components/ConversationSidebar';
 import { MessageList } from './components/MessageList';
@@ -19,6 +19,7 @@ export default function App() {
   const [messages, setMessages] = useState<Record<string, Message[]>>({});
   const [questions, setQuestions] = useState<Record<string, Question[]>>({});
   const [approvals, setApprovals] = useState<Record<string, Approval>>({});
+  const [pendingInteractions, setPendingInteractions] = useState<Record<string, PendingInteraction['kinds']>>({});
   const [conversationWorkspaceIds, setConversationWorkspaceIds] = useState<Record<string, string>>({});
   const [connected, setConnected] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
@@ -34,9 +35,10 @@ export default function App() {
   const activeWorkspace = workspaces.find((workspace) => workspace.id === activeWorkspaceId) || null;
   const activeConversation = conversations.find((conversation) => conversation.id === activeConversationId) || null;
   const waitingConversationIds = useMemo(() => new Set([
+    ...Object.keys(pendingInteractions),
     ...Object.entries(questions).filter(([, pending]) => pending.length > 0).map(([id]) => id),
     ...Object.keys(approvals),
-  ]), [questions, approvals]);
+  ]), [pendingInteractions, questions, approvals]);
   const waitingWorkspaceIds = useMemo(() => new Set(
     [...waitingConversationIds].map((id) => conversationWorkspaceIds[id]).filter((id): id is string => Boolean(id))
   ), [waitingConversationIds, conversationWorkspaceIds]);
@@ -48,12 +50,34 @@ export default function App() {
     const result = await api<{ workspaces: Workspace[] }>('/api/workspaces'); setWorkspaces(result.workspaces);
     return result.workspaces;
   }, []);
+  const loadPendingInteractions = useCallback(async () => {
+    const result = await api<{ interactions: PendingInteraction[] }>('/api/pending-interactions');
+    setPendingInteractions(Object.fromEntries(result.interactions.map((interaction) => [interaction.convId, interaction.kinds])));
+    setConversationWorkspaceIds((current) => {
+      const next = { ...current };
+      result.interactions.forEach((interaction) => {
+        if (interaction.workspaceId) next[interaction.convId] = interaction.workspaceId;
+      });
+      return next;
+    });
+  }, []);
 
   const handleFrame = useCallback((frame: Frame) => {
     if (!frame.convId) return;
     const convId = frame.convId;
     if (frame.workspaceId) {
       setConversationWorkspaceIds((current) => current[convId] === frame.workspaceId ? current : { ...current, [convId]: frame.workspaceId as string });
+    }
+    const interactionKind = frame.type.startsWith('question') ? 'question' : frame.type.startsWith('approval') ? 'approval' : null;
+    if (interactionKind) {
+      const isResolved = frame.type.endsWith('.resolved');
+      setPendingInteractions((current) => {
+        const kinds = new Set(current[convId] || []);
+        if (isResolved) kinds.delete(interactionKind); else kinds.add(interactionKind);
+        const next = { ...current };
+        if (kinds.size) next[convId] = [...kinds]; else delete next[convId];
+        return next;
+      });
     }
     if (frame.type === 'question') return setQuestions((current) => ({ ...current, [convId]: frame.questions || [] }));
     if (frame.type === 'question.resolved') return setQuestions((current) => { const next = { ...current }; delete next[convId]; return next; });
@@ -90,7 +114,7 @@ export default function App() {
   useEffect(() => { conversationIds.current = conversations.map((conversation) => conversation.id); }, [conversations]);
 
   useEffect(() => {
-    Promise.all([loadProjects(), loadWorkspaces(), api<{ voice: boolean }>('/api/health').then((health) => setVoiceEnabled(health.voice))])
+    Promise.all([loadProjects(), loadWorkspaces(), api<{ voice: boolean }>('/api/health').then((health) => setVoiceEnabled(health.voice)), loadPendingInteractions()])
       .then(([, available]) => { if (!activeWorkspaceId && available.length) void selectWorkspace(available[0].id); })
       .catch((reason) => setError(reason instanceof Error ? reason.message : 'Failed to load application state.'));
   }, []);
