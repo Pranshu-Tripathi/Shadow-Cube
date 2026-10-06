@@ -19,6 +19,7 @@ export default function App() {
   const [messages, setMessages] = useState<Record<string, Message[]>>({});
   const [questions, setQuestions] = useState<Record<string, Question[]>>({});
   const [approvals, setApprovals] = useState<Record<string, Approval>>({});
+  const [conversationWorkspaceIds, setConversationWorkspaceIds] = useState<Record<string, string>>({});
   const [connected, setConnected] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [newWorkspaceOpen, setNewWorkspaceOpen] = useState(false);
@@ -36,6 +37,9 @@ export default function App() {
     ...Object.entries(questions).filter(([, pending]) => pending.length > 0).map(([id]) => id),
     ...Object.keys(approvals),
   ]), [questions, approvals]);
+  const waitingWorkspaceIds = useMemo(() => new Set(
+    [...waitingConversationIds].map((id) => conversationWorkspaceIds[id]).filter((id): id is string => Boolean(id))
+  ), [waitingConversationIds, conversationWorkspaceIds]);
 
   const loadProjects = useCallback(async () => {
     const result = await api<{ projects: Project[] }>('/api/projects'); setProjects(result.projects);
@@ -48,6 +52,9 @@ export default function App() {
   const handleFrame = useCallback((frame: Frame) => {
     if (!frame.convId) return;
     const convId = frame.convId;
+    if (frame.workspaceId) {
+      setConversationWorkspaceIds((current) => current[convId] === frame.workspaceId ? current : { ...current, [convId]: frame.workspaceId as string });
+    }
     if (frame.type === 'question') return setQuestions((current) => ({ ...current, [convId]: frame.questions || [] }));
     if (frame.type === 'question.resolved') return setQuestions((current) => { const next = { ...current }; delete next[convId]; return next; });
     if (frame.type === 'approval') return setApprovals((current) => ({ ...current, [convId]: { token: frame.token || '', content: frame.content || '', options: frame.options || [] } }));
@@ -102,6 +109,11 @@ export default function App() {
     try {
       const result = await api<{ conversations: Conversation[] }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/conversations`);
       setConversations(result.conversations);
+      setConversationWorkspaceIds((current) => {
+        const next = { ...current };
+        result.conversations.forEach((conversation) => { next[conversation.id] = workspaceId; });
+        return next;
+      });
       if (result.conversations[0]) await openConversation(workspaceId, result.conversations[0].id);
       else setActiveConversationId(null);
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not open workspace.'); }
@@ -112,6 +124,7 @@ export default function App() {
     try {
       const result = await api<{ conversation: Conversation }>(`/api/workspaces/${encodeURIComponent(activeWorkspace.id)}/conversations`, { method: 'POST', body: '{}' });
       setConversations((current) => current.some((item) => item.id === result.conversation.id) ? current : [...current, result.conversation]);
+      setConversationWorkspaceIds((current) => ({ ...current, [result.conversation.id]: activeWorkspace.id }));
       await openConversation(activeWorkspace.id, result.conversation.id);
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not create conversation.'); }
   };
@@ -140,7 +153,7 @@ export default function App() {
   const groupedTitle = useMemo(() => projects.find((project) => project.id === activeWorkspace?.projectId)?.name || activeWorkspace?.projectName, [projects, activeWorkspace]);
 
   return <div className="app-shell">
-    <Sidebar projects={projects} workspaces={workspaces} activeId={activeWorkspaceId} connected={connected} onSelect={(id) => void selectWorkspace(id)} onNew={() => setNewWorkspaceOpen(true)} />
+    <Sidebar projects={projects} workspaces={workspaces} activeId={activeWorkspaceId} waitingIds={waitingWorkspaceIds} connected={connected} onSelect={(id) => void selectWorkspace(id)} onNew={() => setNewWorkspaceOpen(true)} />
     <ConversationSidebar workspace={activeWorkspace} conversations={conversations} activeId={activeConversationId} waitingIds={waitingConversationIds} onSelect={(id) => activeWorkspace && void openConversation(activeWorkspace.id, id)} onNew={() => void createConversation()} />
     <main className="main-panel">
       {!activeWorkspace ? <div className="app-empty"><div className="empty-cube">◆</div><h1>Choose a workspace</h1><p>Select an existing workspace or create a new one.</p></div> : <>

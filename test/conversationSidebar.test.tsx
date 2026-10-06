@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { ConversationSidebar } from '../web/src/components/ConversationSidebar';
-import type { Conversation, Workspace } from '../web/src/types';
+import { Sidebar } from '../web/src/components/Sidebar';
+import type { Conversation, Project, Workspace } from '../web/src/types';
 
 const workspace = { id: 'workspace', name: 'Workspace' } as Workspace;
 const conversations: Conversation[] = [
@@ -24,5 +25,25 @@ describe('conversation sidebar attention state', () => {
     expect(html).toContain('Needs input, waiting for answer');
     expect(html).toContain('Waiting for answer');
     expect(html).toContain('attention-dot');
+  });
+
+  test('propagates attention to the workspace and its project group', () => {
+    const projects = [{ id: 'project', name: 'Project' }] as Project[];
+    const workspaces = [{ ...workspace, projectId: 'project', provider: 'codex', broadcastDiscord: true }] as Workspace[];
+    const html = renderToStaticMarkup(<Sidebar
+      projects={projects}
+      workspaces={workspaces}
+      activeId="workspace"
+      waitingIds={new Set(['workspace'])}
+      connected
+      onSelect={() => {}}
+      onNew={() => {}}
+    />);
+
+    expect(html).toContain('project-heading waiting');
+    expect(html).toContain('project-workspaces expanded');
+    expect(html).toContain('workspace-link active waiting');
+    expect(html).toContain('Workspace, waiting for an answer');
+    expect(html).toContain('Waiting for answer');
   });
 });

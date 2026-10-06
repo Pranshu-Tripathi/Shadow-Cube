@@ -1,31 +1,40 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { Project, Workspace } from '../types';
 
-export function Sidebar({ projects, workspaces, activeId, connected, onSelect, onNew }: {
+export function Sidebar({ projects, workspaces, activeId, waitingIds, connected, onSelect, onNew }: {
   projects: Project[];
   workspaces: Workspace[];
   activeId: string | null;
+  waitingIds: ReadonlySet<string>;
   connected: boolean;
   onSelect: (id: string) => void;
   onNew: () => void;
 }) {
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const projectIds = new Set(projects.map((project) => project.id));
   const groups = [...projects];
   if (workspaces.some((workspace) => !projectIds.has(workspace.projectId))) {
     groups.push({ id: 'global', name: 'Global / no project', path: null, configured: false, workspaceCount: 0, bootstrapCommands: [] });
   }
   const activeProjectId = workspaces.find((workspace) => workspace.id === activeId)?.projectId;
+  const waitingProjectIds = useMemo(() => new Set(
+    workspaces.filter((workspace) => waitingIds.has(workspace.id)).map((workspace) => workspace.projectId)
+  ), [workspaces, waitingIds]);
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set([
+    ...(activeProjectId ? [activeProjectId] : []),
+    ...waitingProjectIds,
+  ]));
 
   useEffect(() => {
-    if (!activeProjectId) return;
     setExpanded((current) => {
-      if (current.has(activeProjectId)) return current;
       const next = new Set(current);
-      next.add(activeProjectId);
-      return next;
+      let changed = false;
+      if (activeProjectId && !next.has(activeProjectId)) { next.add(activeProjectId); changed = true; }
+      waitingProjectIds.forEach((projectId) => {
+        if (!next.has(projectId)) { next.add(projectId); changed = true; }
+      });
+      return changed ? next : current;
     });
-  }, [activeProjectId]);
+  }, [activeProjectId, waitingProjectIds]);
 
   const toggleProject = (projectId: string) => {
     setExpanded((current) => {
@@ -44,21 +53,26 @@ export function Sidebar({ projects, workspaces, activeId, connected, onSelect, o
           const children = workspaces.filter((workspace) => workspace.projectId === project.id);
           if (!children.length) return null;
           const isExpanded = expanded.has(project.id);
+          const projectWaiting = waitingProjectIds.has(project.id);
           return <section className="project-group" key={project.id}>
-            <button className="project-heading" type="button" aria-expanded={isExpanded} onClick={() => toggleProject(project.id)}>
+            <button className={`project-heading ${projectWaiting ? 'waiting' : ''}`} type="button" aria-expanded={isExpanded} aria-label={`${project.name}${projectWaiting ? ', contains a workspace waiting for an answer' : ''}`} onClick={() => toggleProject(project.id)}>
               <span className="project-chevron" aria-hidden="true">›</span>
               <span className="project-label">{project.name}</span>
               <small>{children.length}</small>
             </button>
             <div className={`project-workspaces ${isExpanded ? 'expanded' : ''}`}>
-              {children.map((workspace) => <button
-                key={workspace.id}
-                className={`workspace-link ${workspace.id === activeId ? 'active' : ''}`}
-                onClick={() => onSelect(workspace.id)}
-              >
-                <span className="workspace-name">{workspace.name}</span>
-                <span className="workspace-meta">{workspace.provider}{workspace.broadcastDiscord ? ' · Discord' : ''}</span>
-              </button>)}
+              {children.map((workspace) => {
+                const waiting = waitingIds.has(workspace.id);
+                return <button
+                  key={workspace.id}
+                  className={`workspace-link ${workspace.id === activeId ? 'active' : ''} ${waiting ? 'waiting' : ''}`}
+                  aria-label={`${workspace.name}${waiting ? ', waiting for an answer' : ''}`}
+                  onClick={() => onSelect(workspace.id)}
+                >
+                  <span className="workspace-name">{workspace.name}{waiting && <span className="attention-dot" aria-hidden="true" />}</span>
+                  <span className="workspace-meta">{waiting ? 'Waiting for answer' : `${workspace.provider}${workspace.broadcastDiscord ? ' · Discord' : ''}`}</span>
+                </button>;
+              })}
             </div>
           </section>;
         })}

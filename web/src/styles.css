@@ -52,6 +52,8 @@ button.danger-text { color: var(--danger); }
 .project-group { margin-bottom: 9px; }
 .project-heading { width: 100%; padding: 7px 8px; display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; gap: 6px; align-items: center; border: 0; background: transparent; color: #b4bcce; font-size: 11px; font-weight: 700; text-align: left; text-transform: uppercase; letter-spacing: .08em; }
 .project-heading:hover:not(:disabled) { background: #151a24; }
+.project-heading.waiting { color: #e8b86f; background: rgba(104, 72, 26, .15); }
+.project-heading.waiting small { color: #f0b45d; box-shadow: 0 0 8px rgba(240, 180, 93, .2); }
 .project-chevron { display: block; color: var(--faint); font-size: 17px; line-height: 1; transform: rotate(0); transition: transform .15s ease; }
 .project-heading[aria-expanded="true"] .project-chevron { transform: rotate(90deg); }
 .project-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -60,8 +62,11 @@ button.danger-text { color: var(--danger); }
 .project-workspaces.expanded { display: block; }
 .workspace-link { display: block; width: 100%; border: 0; background: transparent; text-align: left; margin-bottom: 2px; padding: 9px 10px; }
 .workspace-link.active { background: #1a2030; box-shadow: inset 2px 0 var(--accent); }
-.workspace-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.workspace-link.waiting { background: rgba(104, 72, 26, .24); box-shadow: inset 2px 0 #e8ab54; }
+.workspace-link.active.waiting { background: linear-gradient(90deg, rgba(112, 77, 28, .38), #1a2030 72%); }
+.workspace-name { position: relative; display: block; overflow: hidden; padding-right: 16px; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .workspace-meta { display: block; color: var(--faint); font-size: 10px; margin-top: 4px; text-transform: capitalize; }
+.workspace-link.waiting .workspace-meta { color: #e8b86f; font-weight: 700; letter-spacing: .02em; }
 .connection { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 11px; padding: 0 5px; }
 .status-dot { width: 7px; height: 7px; border-radius: 50%; background: #6d5260; }
 .status-dot.online { background: var(--success); box-shadow: 0 0 8px rgba(105, 213, 158, .55); }
@@ -81,7 +86,7 @@ button.danger-text { color: var(--danger); }
 .conversation-link small { margin-top: 4px; color: var(--faint); font-size: 9px; text-transform: capitalize; }
 .conversation-link.waiting small { color: #e8b86f; font-weight: 700; letter-spacing: .02em; }
 .conversation-title { position: relative; padding-right: 16px; }
-.conversation-title .attention-dot { position: absolute; top: 50%; right: 1px; display: block; width: 7px; height: 7px; overflow: visible; border-radius: 50%; background: #f0b45d; box-shadow: 0 0 9px rgba(240, 180, 93, .72); transform: translateY(-50%); }
+.conversation-title .attention-dot, .workspace-name .attention-dot { position: absolute; top: 50%; right: 1px; display: block; width: 7px; height: 7px; overflow: visible; border-radius: 50%; background: #f0b45d; box-shadow: 0 0 9px rgba(240, 180, 93, .72); transform: translateY(-50%); }
 .conversation-list-empty { padding: 8px; color: var(--faint); font-size: 11px; line-height: 1.5; }
 .main-panel { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
 .workspace-header { min-width: 0; min-height: 68px; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 11px 22px; border-bottom: 1px solid var(--border); background: rgba(12, 15, 21, .72); backdrop-filter: blur(12px); }
