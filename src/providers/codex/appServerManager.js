@@ -1,4 +1,31 @@
+const fs = require('fs');
 const { spawn } = require('child_process');
+const { CODEX_BIN_CANDIDATES } = require('./constants');
+
+// Noise codex writes to stderr on every launch: optional MCP servers that aren't logged in
+// and requirement flags this CLI build doesn't know. Neither affects our turns.
+const STDERR_NOISE = [
+    /Ignoring unknown `features` requirement/,
+    /rmcp::transport::worker: worker quit with fatal/,
+];
+// Codex colourises stderr even when piped.
+const ANSI = /\u001b\[[0-9;]*m/g;
+
+function isStderrNoise(line) {
+    const plain = line.replace(ANSI, '');
+    return STDERR_NOISE.some((re) => re.test(plain));
+}
+
+function resolveCodexBin() {
+    if (process.env.CODEX_BIN) return process.env.CODEX_BIN;
+    for (const candidate of CODEX_BIN_CANDIDATES) {
+        try {
+            fs.accessSync(candidate, fs.constants.X_OK);
+            return candidate;
+        } catch {}
+    }
+    return 'codex';
+}
 
 function createAppServerManager({ state, projectDir }) {
     let handlers = {
@@ -87,7 +114,10 @@ function createAppServerManager({ state, projectDir }) {
     function ensureManager() {
         if (state.mgr && state.mgr.child && !state.mgr.child.killed) return state.mgr.ready;
 
-        const child = spawn('codex', ['app-server'], { cwd: projectDir });
+        const codexBin = resolveCodexBin();
+        const args = ['app-server'];
+        if (process.env.CODEX_MODEL) args.push('-c', `model=${JSON.stringify(process.env.CODEX_MODEL)}`);
+        const child = spawn(codexBin, args, { cwd: projectDir });
         state.mgr = { child, nextId: 1, pending: new Map(), buffer: '', ready: null };
 
         child.stdout.on('data', (raw) => {
@@ -100,7 +130,9 @@ function createAppServerManager({ state, projectDir }) {
         });
         child.stderr.on('data', (data) => {
             const text = data.toString().trim();
-            if (text) console.error('[DEBUG] CODEX APP-SERVER STDERR:', text);
+            if (!text) return;
+            const lines = text.split('\n').filter((line) => !isStderrNoise(line));
+            if (lines.length) console.error('[DEBUG] CODEX APP-SERVER STDERR:', lines.join('\n'));
         });
         child.on('close', (code) => {
             console.log(`[DEBUG] CODEX APP-SERVER EXITED (Code: ${code})`);
