@@ -24,6 +24,39 @@ function createApprovalFlow({ state, appServer, formatter }) {
             return;
         }
         const token = `${state.approvalCounter++}`;
+        if (typeof channel.requestApproval === 'function') {
+            const approval = { reqId, message: null, resolved: false, surface: null, resolution: null };
+            approval.resolve = (decision, context = {}) => {
+                if (approval.resolved || !DECISIONS[decision]) return false;
+                approval.resolved = true;
+                approval.resolution = { decision, context };
+                state.pendingApprovals.delete(token);
+                appServer.respond(reqId, { decision });
+                if (approval.surface?.resolve) {
+                    Promise.resolve(approval.surface.resolve(decision, context)).catch((error) => {
+                        console.error('[DEBUG] failed to settle approval surfaces:', error.message);
+                    });
+                }
+                return true;
+            };
+            state.pendingApprovals.set(token, approval);
+            const options = Object.entries(DECISIONS).map(([decision, meta]) => ({
+                decision,
+                label: meta.label,
+                tone: decision === 'accept' || decision === 'acceptForSession' ? 'primary' : decision === 'cancel' ? 'danger' : 'default',
+            }));
+            try {
+                approval.surface = await channel.requestApproval(token, body, options, approval.resolve);
+                if (approval.resolved && approval.surface?.resolve) {
+                    await approval.surface.resolve(approval.resolution.decision, approval.resolution.context);
+                }
+            } catch (e) {
+                if (!approval.resolved) state.pendingApprovals.delete(token);
+                console.error('[DEBUG] failed to post web approval:', e.message);
+                if (!approval.resolved) appServer.respond(reqId, { decision: 'decline' });
+            }
+            return;
+        }
         const rows = approvalRows(token);
         try {
             const message = await channel.send({ content: body, components: rows });
@@ -37,14 +70,12 @@ function createApprovalFlow({ state, appServer, formatter }) {
     function handleServerRequest(id, method, params) {
         if (method === 'item/commandExecution/requestApproval') {
             const channel = state.channelByThread.get(params.threadId);
-            postApproval(channel, id, formatter.formatCommandApproval(params));
-            return;
+            return postApproval(channel, id, formatter.formatCommandApproval(params));
         }
         if (method === 'item/fileChange/requestApproval') {
             const channel = state.channelByThread.get(params.threadId);
             const changes = state.pendingPatches.get(params.itemId);
-            postApproval(channel, id, formatter.formatFileChangeApproval(params, changes));
-            return;
+            return postApproval(channel, id, formatter.formatFileChangeApproval(params, changes));
         }
         appServer.respondError(id, -32601, `unsupported request: ${method}`);
     }
@@ -62,9 +93,18 @@ function createApprovalFlow({ state, appServer, formatter }) {
             await interaction.reply({ content: 'Invalid decision.', ephemeral: true }).catch(() => {});
             return;
         }
-        approval.resolved = true;
-        state.pendingApprovals.delete(token);
-        appServer.respond(approval.reqId, { decision });
+        const accepted = typeof approval.resolve === 'function'
+            ? approval.resolve(decision, { skipMessageId: interaction.message?.id })
+            : (() => {
+                approval.resolved = true;
+                state.pendingApprovals.delete(token);
+                appServer.respond(approval.reqId, { decision });
+                return true;
+            })();
+        if (!accepted) {
+            await interaction.reply({ content: 'This approval is no longer active.', ephemeral: true }).catch(() => {});
+            return;
+        }
         await interaction.update({
             content: interaction.message.content + `\n\n✅ **${DECISIONS[decision].label}**`,
             components: [],

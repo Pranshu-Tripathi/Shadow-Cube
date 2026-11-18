@@ -1,6 +1,17 @@
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder } = require('discord.js');
 
-function createQuestionFlow({ activeProcesses, writeStdin }) {
+const DISCORD_CONTENT_LIMIT = 2000;
+
+function text(value) {
+    return value == null ? '' : String(value);
+}
+
+function clipped(value, limit, fallback = '') {
+    const clean = text(value).trim() || fallback;
+    return clean.length <= limit ? clean : `${clean.slice(0, Math.max(0, limit - 1))}…`;
+}
+
+function createQuestionFlow({ activeProcesses, writeStdin, coordinator }) {
     const pendingQuestions = new Map();
     let interactionCounter = 0;
 
@@ -11,19 +22,20 @@ function createQuestionFlow({ activeProcesses, writeStdin }) {
 
     function buildQuestionComponents(token, question, questionIndex) {
         const rows = [];
-        const tooManyOptions = question.options.length > 4;
-        const useSelect = question.multiSelect || tooManyOptions;
+        const visibleOptions = question.options.slice(0, 25);
+        const tooManyOptions = visibleOptions.length > 4;
+        const useSelect = visibleOptions.length > 0 && (question.multiSelect || tooManyOptions);
 
         if (useSelect) {
             const select = new StringSelectMenuBuilder()
                 .setCustomId(`auq:select:${token}:${questionIndex}`)
                 .setPlaceholder(question.multiSelect ? 'Pick one or more…' : 'Pick one…')
                 .setMinValues(1)
-                .setMaxValues(question.multiSelect ? question.options.length : 1)
+                .setMaxValues(question.multiSelect ? visibleOptions.length : 1)
                 .addOptions(
-                    question.options.slice(0, 25).map((opt, i) => ({
-                        label: opt.label.slice(0, 100),
-                        description: opt.description ? opt.description.slice(0, 100) : undefined,
+                    visibleOptions.map((opt, i) => ({
+                        label: clipped(opt.label, 100, `Option ${i + 1}`),
+                        description: opt.description ? clipped(opt.description, 100) : undefined,
                         value: String(i),
                     }))
                 );
@@ -35,10 +47,10 @@ function createQuestionFlow({ activeProcesses, writeStdin }) {
                     .setStyle(ButtonStyle.Secondary)
             ));
         } else {
-            const buttons = question.options.slice(0, 4).map((opt, i) =>
+            const buttons = visibleOptions.slice(0, 4).map((opt, i) =>
                 new ButtonBuilder()
                     .setCustomId(`auq:btn:${token}:${questionIndex}:${i}`)
-                    .setLabel(opt.label.slice(0, 80))
+                    .setLabel(clipped(opt.label, 80, `Option ${i + 1}`))
                     .setStyle(ButtonStyle.Primary)
             );
             buttons.push(
@@ -55,26 +67,49 @@ function createQuestionFlow({ activeProcesses, writeStdin }) {
     function renderQuestionBody(question, questionIndex, total) {
         const header = question.header ? `**${question.header}**` : '';
         const prefix = total > 1 ? `❓ Question ${questionIndex + 1}/${total}` : '❓';
-        const lines = [`${prefix} ${header}`.trim(), question.question];
-        if (question.multiSelect) lines.push('*Select one or more, then submit.*');
+        const lines = [];
+        let length = 0;
+        const append = (value, { allowTruncate = true } = {}) => {
+            const line = text(value);
+            const separator = lines.length ? 1 : 0;
+            const available = DISCORD_CONTENT_LIMIT - length - separator;
+            if (available <= 0) return false;
+            if (line.length <= available) {
+                lines.push(line);
+                length += separator + line.length;
+                return true;
+            }
+            if (!allowTruncate) return false;
+            lines.push(clipped(line, available));
+            length += separator + Math.min(line.length, available);
+            return false;
+        };
+
+        append(`${prefix} ${header}`.trim());
+        if (!append(question.question)) return lines.join('\n');
+        if (question.multiSelect && !append('*Select one or more, then submit.*')) return lines.join('\n');
         for (let i = 0; i < question.options.length; i++) {
             const opt = question.options[i];
-            let line = `\`${i + 1}.\` **${opt.label}**`;
-            if (opt.description) line += ` — ${opt.description}`;
-            lines.push(line);
-            if (opt.preview) lines.push(`\`\`\`\n${opt.preview.slice(0, 500)}\n\`\`\``);
+            let line = `\`${i + 1}.\` **${clipped(opt.label, 100, `Option ${i + 1}`)}**`;
+            if (opt.description) line += ` — ${clipped(opt.description, 180)}`;
+            if (!append(line)) break;
+            if (opt.preview) append(`\`\`\`\n${clipped(opt.preview, 500)}\n\`\`\``, { allowTruncate: false });
         }
         return lines.join('\n');
     }
 
-    async function handleAskUserQuestion(targetChannel, child, requestId, toolUseId, input) {
+    async function handleAskUserQuestion(targetChannel, child, requestId, toolUseId, input, { conversationId } = {}) {
         const threadId = targetChannel.id;
         const rawQuestions = Array.isArray(input.questions) ? input.questions : [];
         const questions = rawQuestions.map(q => ({
-            question: q.question || '',
-            header: q.header || '',
+            question: text(q.question),
+            header: text(q.header),
             multiSelect: !!q.multiSelect,
-            options: Array.isArray(q.options) ? q.options : [],
+            options: Array.isArray(q.options) ? q.options.map((option) => ({
+                label: text(option?.label),
+                description: text(option?.description),
+                preview: text(option?.preview),
+            })) : [],
         }));
 
         if (questions.length === 0) {
@@ -89,6 +124,12 @@ function createQuestionFlow({ activeProcesses, writeStdin }) {
             return;
         }
 
+        const canonicalId = conversationId || threadId;
+        if (coordinator) {
+            coordinator.create({ conversationId: canonicalId, child, requestId, toolUseId, input });
+            coordinator.addAlias(canonicalId, threadId);
+        }
+
         const token = nextInteractionToken();
         const pending = {
             toolUseId,
@@ -100,6 +141,7 @@ function createQuestionFlow({ activeProcesses, writeStdin }) {
             awaitingCustomFor: null,
             messages: [],
             token,
+            conversationId: canonicalId,
         };
         pendingQuestions.set(threadId, pending);
 
@@ -133,27 +175,27 @@ function createQuestionFlow({ activeProcesses, writeStdin }) {
             return;
         }
 
-        const child = activeProcesses.get(threadId);
-        pendingQuestions.delete(threadId);
-        if (!child) {
+        const child = activeProcesses.get(pending.conversationId) || activeProcesses.get(threadId);
+        if (!child && !coordinator?.get(pending.conversationId)) {
+            pendingQuestions.delete(threadId);
             await targetChannel.send('*(Answers collected, but the Claude process is no longer running.)*').catch(() => {});
             return;
         }
-        const ok = writeStdin(child, {
-            type: 'control_response',
-            response: {
-                subtype: 'success',
-                request_id: pending.requestId,
+
+        const result = coordinator
+            ? coordinator.resolve(pending.conversationId, pending.answers)
+            : { ok: writeStdin(child, {
+                type: 'control_response',
                 response: {
-                    behavior: 'allow',
-                    updatedInput: {
-                        questions: pending.originalInput.questions,
-                        answers: pending.answers,
+                    subtype: 'success',
+                    request_id: pending.requestId,
+                    response: {
+                        behavior: 'allow',
+                        updatedInput: { questions: pending.originalInput.questions, answers: pending.answers },
                     },
                 },
-            },
-        });
-        if (!ok) {
+            }) };
+        if (!result.ok) {
             await targetChannel.send('*(Failed to send answers — Claude stdin closed.)*').catch(() => {});
         }
     }
@@ -251,7 +293,22 @@ function createQuestionFlow({ activeProcesses, writeStdin }) {
         const pending = pendingQuestions.get(threadId);
         if (!pending) return;
         pendingQuestions.delete(threadId);
+        coordinator?.clear(pending.conversationId, summary);
         await disableQuestionComponents(pending, summary);
+    }
+
+    if (coordinator) {
+        coordinator.subscribe(({ type, record, answers, summary }) => {
+            if (type !== 'resolved' && type !== 'cleared') return;
+            for (const [threadId, pending] of pendingQuestions) {
+                if (pending.conversationId !== record.conversationId) continue;
+                pendingQuestions.delete(threadId);
+                const answerText = answers
+                    ? Object.values(answers).flat().filter(Boolean).join(', ')
+                    : '';
+                disableQuestionComponents(pending, summary || (answerText ? `Answered: ${answerText}` : 'Answered.'));
+            }
+        });
     }
 
     return {

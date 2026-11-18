@@ -5,11 +5,19 @@ const path = require('path');
 const ROOT_DIR = path.join(__dirname, '..');
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const PROJECT_DIR = process.env.PROJECT_DIR || process.cwd();
+const PROJECTS_ROOT = process.env.PROJECTS_ROOT || path.dirname(PROJECT_DIR);
 const BRANCH_PREFIX = process.env.BRANCH_PREFIX != null ? process.env.BRANCH_PREFIX : 'shadow-cube';
 const GITHUB_PAT = process.env.GITHUB_PAT;
+const WEB_PORT = Number(process.env.WEB_PORT || 8200);
+// Guild the web notebook creates Discord mirror channels in. Optional — defaults to
+// the first guild the bot is a member of.
+const DISCORD_GUILD_ID = process.env.DISCORD_GUILD_ID || null;
+const WEB_ENABLED = process.env.WEB_ENABLED !== '0' && process.env.WEB_ENABLED !== 'false';
 
 const SESSIONS_DIR = path.join(ROOT_DIR, 'sessions');
 const SESSIONS_CONFIG_PATH = path.join(SESSIONS_DIR, 'config.json');
+const WEB_CONVERSATIONS_PATH = path.join(SESSIONS_DIR, 'web-conversations.json');
+const STATE_DB_PATH = process.env.STATE_DB_PATH || path.join(SESSIONS_DIR, 'shadow-cube.sqlite');
 const CONFIG_DIR = path.join(ROOT_DIR, 'config');
 const CHANNEL_CONFIG_PATH = path.join(CONFIG_DIR, 'channels.json');
 const WORKTREES_ROOT = process.env.WORKTREES_DIR || '/Users/tripathi/Desktop/development/code/worktrees';
@@ -30,6 +38,8 @@ const VOICE_CLEANUP_MODEL = process.env.VOICE_CLEANUP_MODEL != null
     : 'gemma3:1b';
 const VOICE_CLEANUP_KEEP_ALIVE = process.env.VOICE_CLEANUP_KEEP_ALIVE || '30m';
 const OLLAMA_HOST = process.env.OLLAMA_HOST || 'http://127.0.0.1:11434';
+const TITLE_MODEL = process.env.TITLE_MODEL != null ? process.env.TITLE_MODEL : VOICE_CLEANUP_MODEL;
+const TITLE_TIMEOUT_MS = Number(process.env.TITLE_TIMEOUT_MS || 8000);
 
 function ensureDir(dir) {
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -68,10 +78,16 @@ module.exports = {
     ROOT_DIR,
     DISCORD_TOKEN,
     PROJECT_DIR,
+    PROJECTS_ROOT,
     BRANCH_PREFIX,
     GITHUB_PAT,
+    WEB_PORT,
+    WEB_ENABLED,
+    DISCORD_GUILD_ID,
     SESSIONS_DIR,
     SESSIONS_CONFIG_PATH,
+    WEB_CONVERSATIONS_PATH,
+    STATE_DB_PATH,
     CONFIG_DIR,
     CHANNEL_CONFIG_PATH,
     WORKTREES_ROOT,
@@ -86,4 +102,6 @@ module.exports = {
     VOICE_CLEANUP_MODEL,
     VOICE_CLEANUP_KEEP_ALIVE,
     OLLAMA_HOST,
+    TITLE_MODEL,
+    TITLE_TIMEOUT_MS,
 };

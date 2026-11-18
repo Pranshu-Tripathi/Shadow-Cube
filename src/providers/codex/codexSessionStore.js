@@ -1,43 +1,42 @@
-const fs = require('fs');
-const path = require('path');
-const config = require('../../config');
-
-const CODEX_SESSIONS_PATH = path.join(config.SESSIONS_DIR, 'codex-config.json');
+const { getDatabase } = require('../../db/database');
 
 function createCodexSessionStore({ state }) {
     function loadCodexSessions() {
-        try {
-            if (!fs.existsSync(CODEX_SESSIONS_PATH)) return { threads: {} };
-            return JSON.parse(fs.readFileSync(CODEX_SESSIONS_PATH, 'utf8'));
-        } catch {
-            return { threads: {} };
+        const threads = {};
+        for (const row of getDatabase().query("SELECT conversation_id, session_id, channel_name FROM provider_sessions WHERE provider = 'codex'").all()) {
+            threads[row.conversation_id] = { 'codex session id': row.session_id, channel: row.channel_name };
         }
+        return { threads };
     }
 
     function saveCodexSessions(sessionsConfig) {
-        if (!fs.existsSync(config.SESSIONS_DIR)) fs.mkdirSync(config.SESSIONS_DIR, { recursive: true });
-        fs.writeFileSync(CODEX_SESSIONS_PATH, JSON.stringify(sessionsConfig, null, 2));
+        const db = getDatabase();
+        db.transaction(() => {
+            db.query("DELETE FROM provider_sessions WHERE provider = 'codex'").run();
+            for (const [threadId, entry] of Object.entries(sessionsConfig.threads || {})) {
+                if (entry['codex session id']) setCodexSession(threadId, entry['codex session id'], entry.channel);
+            }
+        })();
     }
 
     function getCodexSession(threadId) {
-        const sessionsConfig = loadCodexSessions();
-        const entry = sessionsConfig.threads[threadId];
-        return entry ? entry['codex session id'] : '';
+        return getDatabase().query("SELECT session_id FROM provider_sessions WHERE conversation_id = ? AND provider = 'codex'")
+            .get(threadId)?.session_id || '';
     }
 
     function setCodexSession(threadId, sessionId, channelName) {
-        const sessionsConfig = loadCodexSessions();
-        sessionsConfig.threads[threadId] = {
-            'codex session id': sessionId,
-            'channel': channelName,
-        };
-        saveCodexSessions(sessionsConfig);
+        getDatabase().query(`
+            INSERT INTO provider_sessions (conversation_id, provider, session_id, channel_name, updated_at)
+            VALUES (?, 'codex', ?, ?, ?)
+            ON CONFLICT(conversation_id, provider) DO UPDATE SET
+                session_id = excluded.session_id,
+                channel_name = excluded.channel_name,
+                updated_at = excluded.updated_at
+        `).run(threadId, sessionId, channelName || null, Date.now());
     }
 
     function clearCodexSession(threadId) {
-        const sessionsConfig = loadCodexSessions();
-        delete sessionsConfig.threads[threadId];
-        saveCodexSessions(sessionsConfig);
+        getDatabase().query("DELETE FROM provider_sessions WHERE conversation_id = ? AND provider = 'codex'").run(threadId);
 
         const codexThreadId = [...state.channelByThread.entries()].find(([, ch]) => ch?.id === threadId)?.[0];
         if (codexThreadId) {

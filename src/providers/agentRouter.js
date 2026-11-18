@@ -25,14 +25,17 @@ function createAgentRouter({
         readWorktreeMemory: memory.readWorktreeMemory,
     };
 
-    function runAgent(prompt, targetChannel) {
+    // `provider` overrides the channel default — the web notebook uses this to make
+    // the provider a per-conversation (thread) choice rather than a per-worktree one.
+    function runAgent(prompt, targetChannel, { provider } = {}) {
         const channelId = channelHelpers.getParentChannelId(targetChannel);
         if (!worktrees.getProjectConfig(channelId)) {
             return targetChannel
                 .send('**No project set for this channel.** Run `!project -name <name> -path <path>` first.')
                 .catch(() => {});
         }
-        if (getProvider(channelId) === 'codex') {
+        const effectiveProvider = provider || getProvider(channelId);
+        if (effectiveProvider === 'codex') {
             return runCodex(prompt, targetChannel, codexDeps);
         }
         return claudeRunner.runClaude(prompt, targetChannel);

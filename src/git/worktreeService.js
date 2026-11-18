@@ -6,6 +6,7 @@ const WORKTREE_EXCLUDES = ['.out/', '.skills/', '.claude/', '.memory/', '.shadow
 
 function createWorktreeService({ config, channelStore }) {
     const defaultBranchByProject = new Map();
+    let bootstrapRunner = null;
 
     function getProjectConfig(channelId) {
         const channelConfig = channelStore.loadChannelConfig();
@@ -98,7 +99,7 @@ function createWorktreeService({ config, channelStore }) {
         }
     }
 
-    function createWorktree(worktreePath, branch, baseBranch, projectDir) {
+    function createWorktree(worktreePath, branch, baseBranch, projectDir, channelId) {
         try {
             const worktreesBase = path.dirname(worktreePath);
             if (!fs.existsSync(worktreesBase)) fs.mkdirSync(worktreesBase, { recursive: true });
@@ -115,6 +116,14 @@ function createWorktreeService({ config, channelStore }) {
 
             fs.writeFileSync(path.join(worktreePath, '.shadow-cube-base'), baseBranch);
             setupWorktreeScaffolding(worktreePath);
+            if (bootstrapRunner && channelId) {
+                try {
+                    const result = bootstrapRunner({ workspaceId: channelId, worktreePath, force: false });
+                    if (result.status === 'failed') console.error(`[DEBUG] Worktree bootstrap failed in ${worktreePath}`);
+                } catch (error) {
+                    console.error(`[DEBUG] Worktree bootstrap failed in ${worktreePath}:`, error.message);
+                }
+            }
 
             console.log(`[DEBUG] Created worktree: ${worktreePath} (branch: ${branch}, base: ${baseBranch})`);
             return worktreePath;
@@ -134,7 +143,7 @@ function createWorktreeService({ config, channelStore }) {
             } catch {
                 console.log(`[DEBUG] Worktree directory exists but is not a valid git worktree. Removing and recreating.`);
                 fs.rmSync(worktreePath, { recursive: true, force: true });
-                return createWorktree(worktreePath, branch, baseBranch, projectDir);
+                return createWorktree(worktreePath, branch, baseBranch, projectDir, channelId);
             }
 
             const markerPath = path.join(worktreePath, '.shadow-cube-base');
@@ -156,7 +165,7 @@ function createWorktreeService({ config, channelStore }) {
             return worktreePath;
         }
 
-        return createWorktree(worktreePath, branch, baseBranch, projectDir);
+        return createWorktree(worktreePath, branch, baseBranch, projectDir, channelId);
     }
 
     function rebaseWorktreeOnto(worktreePath, branch) {
@@ -245,6 +254,10 @@ function createWorktreeService({ config, channelStore }) {
         }
     }
 
+    function setBootstrapRunner(runner) {
+        bootstrapRunner = typeof runner === 'function' ? runner : null;
+    }
+
     return {
         getProjectConfig,
         getDefaultBranch,
@@ -261,6 +274,7 @@ function createWorktreeService({ config, channelStore }) {
         deployWorktree,
         pushWorktree,
         fetchRemoteBranch,
+        setBootstrapRunner,
     };
 }
 

@@ -14,11 +14,22 @@ const { createClaudeRunner } = require('./providers/claude/claudeRunner');
 const { createAgentRouter } = require('./providers/agentRouter');
 const { createCommandRegistry } = require('./commands/registry');
 const { runCodex, clearCodexSession, handleCodexApproval } = require('./providers/codex');
+const { createTranscriber } = require('./voice/transcriber');
+const { createVocabulary } = require('./voice/vocabulary');
+const { createCleanup } = require('./voice/cleanup');
+const { createQuestionCoordinator } = require('./interactions/questionCoordinator');
+const { createProjectStore } = require('./stores/projectStore');
+const { createWorkspaceLifecycleService } = require('./git/workspaceLifecycleService');
+const { createBootstrapService } = require('./git/bootstrapService');
+const { createOllamaClient } = require('./local/ollamaClient');
+const { createTitleService } = require('./conversations/titleService');
 
 function createBot() {
-    if (!config.DISCORD_TOKEN) {
-        console.error('DISCORD_TOKEN is required. Set it in your .env file.');
-        process.exit(1);
+    // Discord is optional: the local web interface (port 8200) is the home base and
+    // runs with or without a token. Without one, we simply never log the client in.
+    const discordEnabled = !!config.DISCORD_TOKEN;
+    if (!discordEnabled) {
+        console.warn('[DEBUG] No DISCORD_TOKEN set — running web-only (Discord disabled).');
     }
 
     const client = new Client({
@@ -27,12 +38,17 @@ function createBot() {
     });
 
     const activeProcesses = new Map();
+    const questionCoordinator = createQuestionCoordinator({ writeStdin: claudeStdio.writeStdin });
     const worktrees = createWorktreeService({ config, channelStore });
+    const projectStore = createProjectStore({ projectsRoot: config.PROJECTS_ROOT });
+    const bootstrap = createBootstrapService();
+    worktrees.setBootstrapRunner((options) => bootstrap.run(options));
     const github = createGithubClient({ token: config.GITHUB_PAT });
     const rulesRepo = createRulesRepoService({ github, channelStore, worktrees, memory });
     const questionFlow = createQuestionFlow({
         activeProcesses,
         writeStdin: claudeStdio.writeStdin,
+        coordinator: questionCoordinator,
     });
     const claudeRunner = createClaudeRunner({
         config,
@@ -56,6 +72,22 @@ function createBot() {
         runCodex,
     });
 
+    // Voice primitives are shared between Discord voice notes and the web voice mode
+    // so the whisper model is warmed and used once, not per-transport.
+    const transcriber = createTranscriber({ config });
+    const vocabulary = createVocabulary({ config });
+    const ollamaClient = createOllamaClient({ host: config.OLLAMA_HOST });
+    const cleanup = createCleanup({ config, ollamaClient });
+    const titleService = createTitleService({ config, ollamaClient });
+    const workspaceLifecycle = createWorkspaceLifecycleService({
+        config,
+        worktrees,
+        activeProcesses,
+        sessionStore,
+        clearCodexSession,
+        questionCoordinator,
+    });
+
     const context = {
         config,
         client,
@@ -67,10 +99,18 @@ function createBot() {
         memory,
         claudeStdio,
         worktrees,
+        projectStore,
+        bootstrap,
         rulesRepo,
         questionFlow,
+        questionCoordinator,
         agentRouter,
         clearCodexSession,
+        transcriber,
+        vocabulary,
+        cleanup,
+        titleService,
+        workspaceLifecycle,
     };
     const commandRegistry = createCommandRegistry(context);
 
@@ -113,12 +153,14 @@ function createBot() {
     function start() {
         process.on('SIGINT', () => shutdown('SIGINT'));
         process.on('SIGTERM', () => shutdown('SIGTERM'));
+        if (!discordEnabled) return Promise.resolve();
         return client.login(config.DISCORD_TOKEN);
     }
 
     return {
         client,
         context,
+        discordEnabled,
         start,
         shutdown,
     };

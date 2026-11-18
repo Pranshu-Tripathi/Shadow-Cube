@@ -1,0 +1,78 @@
+// FanoutSink mirrors a conversation to several sinks at once — the web notebook's
+// "broadcast to Discord" toggle wraps the WebSink (primary) plus a DiscordSink
+// (mirror). The primary drives all keying (session id, worktree, questions); the
+// mirrors are best-effort output copies and never block or break the primary.
+
+function createFanoutSink({ primary, mirrors = [], getMirrors }) {
+    async function activeMirrors() {
+        if (!getMirrors) return mirrors;
+        try {
+            return await Promise.resolve(getMirrors());
+        } catch (error) {
+            console.error('[DEBUG] failed to resolve active mirror sinks:', error.message);
+            return [];
+        }
+    }
+
+    async function send(payload) {
+        const primaryHandle = await primary.send(payload);
+        const resolvedMirrors = await activeMirrors();
+        const mirrorHandles = await Promise.all(
+            resolvedMirrors.map((m) => Promise.resolve(m.send(payload)).catch(() => null))
+        );
+
+        return {
+            id: primaryHandle.id,
+            edit(next) {
+                return Promise.all([
+                    primaryHandle.edit(next),
+                    ...mirrorHandles.map((h) => (h && h.edit ? Promise.resolve(h.edit(next)).catch(() => {}) : null)),
+                ]).then(() => {});
+            },
+        };
+    }
+
+    return {
+        __sinkKind: 'fanout',
+        id: primary.id,
+        parentId: primary.parentId,
+        parentName: primary.parentName,
+        isThread: primary.isThread,
+        send,
+        // Interactive prompts must be actionable on every active surface. Keep
+        // mirrors best-effort, but make delivery failures visible in server logs.
+        askQuestion: async (...args) => {
+            if (primary.askQuestion) await Promise.resolve(primary.askQuestion(...args));
+            const resolvedMirrors = await activeMirrors();
+            await Promise.all(resolvedMirrors.map((mirror) => (
+                mirror.askQuestion ? Promise.resolve(mirror.askQuestion(...args)).catch((error) => {
+                    console.error(`[DEBUG] failed to mirror interactive question to ${mirror.__sinkKind || 'sink'}:`, error.message);
+                }) : null
+            )));
+        },
+        requestApproval: primary.requestApproval ? async (...args) => {
+            const primaryHandle = await Promise.resolve(primary.requestApproval(...args));
+            const resolvedMirrors = await activeMirrors();
+            const mirrorHandles = await Promise.all(resolvedMirrors.map((mirror) => (
+                mirror.requestApproval ? Promise.resolve(mirror.requestApproval(...args)).catch((error) => {
+                    console.error(`[DEBUG] failed to mirror approval to ${mirror.__sinkKind || 'sink'}:`, error.message);
+                    return null;
+                }) : null
+            )));
+            const handles = [primaryHandle, ...mirrorHandles].filter(Boolean);
+            return {
+                resolve(decision, context) {
+                    return Promise.all(handles.map((handle) => (
+                        handle.resolve ? Promise.resolve(handle.resolve(decision, context)).catch((error) => {
+                            console.error('[DEBUG] failed to settle approval surface:', error.message);
+                        }) : null
+                    ))).then(() => {});
+                },
+            };
+        } : undefined,
+    };
+}
+
+module.exports = {
+    createFanoutSink,
+};

@@ -38,26 +38,14 @@ function stripModelArtifacts(raw) {
         .trim();
 }
 
-function createCleanup({ config }) {
+const { createOllamaClient } = require('../local/ollamaClient');
+
+function createCleanup({ config, ollamaClient = createOllamaClient({ host: config.OLLAMA_HOST }) }) {
     const model = config.VOICE_CLEANUP_MODEL;
     const keepAlive = config.VOICE_CLEANUP_KEEP_ALIVE;
     const enabled = Boolean(model);
 
-    function generate(prompt, timeoutMs) {
-        return fetch(`${config.OLLAMA_HOST}/api/generate`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                model,
-                prompt,
-                stream: false,
-                think: false,           // qwen3 et al. reason by default; we only want the edit
-                keep_alive: keepAlive,  // stay resident, otherwise every note pays the load cost
-                options: { temperature: 0 },
-            }),
-            signal: AbortSignal.timeout(timeoutMs),
-        });
-    }
+    const generate = (prompt, timeoutMs) => ollamaClient.generate({ model, prompt, timeoutMs, keepAlive, temperature: 0, think: false });
 
     // Cold-loading a model costs far more than the edit itself, so pull it into
     // memory at boot rather than making the first voice note wait for it.
@@ -65,9 +53,7 @@ function createCleanup({ config }) {
         if (!enabled) return;
         try {
             const started = Date.now();
-            const response = await generate('', WARMUP_TIMEOUT_MS);
-            if (!response.ok) throw new Error(`ollama returned HTTP ${response.status}`);
-            await response.json();
+            await generate('', WARMUP_TIMEOUT_MS);
             console.log(`[DEBUG] voice cleanup model ${model} warm (${Date.now() - started}ms)`);
         } catch (e) {
             console.error(`[DEBUG] could not warm ${model}:`, e.message);
@@ -78,13 +64,8 @@ function createCleanup({ config }) {
         if (!enabled || !text) return { text, cleaned: false };
 
         try {
-            const response = await generate(buildPrompt(text, terms), CLEANUP_TIMEOUT_MS);
-            if (!response.ok) {
-                throw new Error(`ollama returned HTTP ${response.status}`);
-            }
-
-            const body = await response.json();
-            const candidate = stripModelArtifacts(body.response || '');
+            const raw = await generate(buildPrompt(text, terms), CLEANUP_TIMEOUT_MS);
+            const candidate = stripModelArtifacts(raw);
             if (!candidate) throw new Error('ollama returned an empty response');
 
             const ratio = candidate.length / text.length;
